@@ -34,9 +34,26 @@ without its asset archives."
 fi
 
 # ---------------------------------------------------------------------------
-# Runtime directories
+# Runtime directories and ownership
 # ---------------------------------------------------------------------------
+# Everything that touches the Wine prefix runs as the unprivileged `wine` user:
+# Wine warns loudly about running as root, winetricks refuses outright, and a
+# root-owned prefix on a persistent volume would then be unwritable by anything
+# that came later.
+RUN_UID="$(id -u wine)"
+RUN_GID="$(id -g wine)"
+
 mkdir -p /run/cnc/pulse "${WINEPREFIX}" "${HOME}/.cache" /var/log/cnc
+install -d -m 1777 /tmp/.X11-unix
+chown "${RUN_UID}:${RUN_GID}" /run/cnc /run/cnc/pulse /var/log/cnc 2>/dev/null || true
+chown -R "${RUN_UID}:${RUN_GID}" "${HOME}" 2>/dev/null || true
+# The prefix can hold tens of thousands of files once the DXVK shader cache
+# fills up, so only walk it when the ownership is actually wrong.
+if [[ "$(stat -c %u "${WINEPREFIX}" 2>/dev/null || echo -1)" != "${RUN_UID}" ]]; then
+    log "taking ownership of ${WINEPREFIX}"
+    chown -R "${RUN_UID}:${RUN_GID}" "${WINEPREFIX}" 2>/dev/null || \
+        log "WARNING: could not chown ${WINEPREFIX}; the game may fail to write its prefix"
+fi
 export XDG_RUNTIME_DIR=/run/cnc
 
 # ---------------------------------------------------------------------------
@@ -68,7 +85,13 @@ esac
 # ---------------------------------------------------------------------------
 # Provision the Wine prefix (idempotent; safe to re-run on every boot)
 # ---------------------------------------------------------------------------
-/opt/cnc/scripts/setup-prefix.sh
+# setpriv keeps the environment we just built, which `su` would discard.
+if [[ "$(id -u)" -eq 0 ]]; then
+    setpriv --reuid="${RUN_UID}" --regid="${RUN_GID}" --init-groups \
+        /opt/cnc/scripts/setup-prefix.sh
+else
+    /opt/cnc/scripts/setup-prefix.sh
+fi
 
 # ---------------------------------------------------------------------------
 # Render supervisord config and go

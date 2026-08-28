@@ -42,6 +42,32 @@ logging.basicConfig(
 log = logging.getLogger("server")
 
 
+def _browser_ice_servers(stun: str, turn: str) -> list[dict]:
+    """Translate GStreamer-style ICE URIs into RTCIceServer dictionaries.
+
+    GStreamer wants `stun://host:port` and `turn://user:pass@host:port`; the
+    browser wants `stun:host:port` plus separate credentials. Handing the
+    browser exactly the servers this deployment is configured for -- rather
+    than a hardcoded public STUN address -- means an air-gapped or firewalled
+    host does not stall ICE gathering on a name it can never resolve.
+    """
+    servers: list[dict] = []
+    if stun:
+        servers.append({"urls": stun.replace("stun://", "stun:", 1)})
+    if turn:
+        rest = turn.replace("turn://", "", 1).replace("turns://", "", 1)
+        scheme = "turns:" if turn.startswith("turns://") else "turn:"
+        if "@" in rest:
+            creds, host = rest.rsplit("@", 1)
+            user, _, password = creds.partition(":")
+            servers.append(
+                {"urls": scheme + host, "username": user, "credential": password}
+            )
+        else:
+            servers.append({"urls": scheme + rest})
+    return servers
+
+
 def _env_int(name: str, default: int) -> int:
     try:
         return int(os.environ.get(name, default))
@@ -62,6 +88,7 @@ class Config:
         self.stun_server = os.environ.get("STUN_SERVER", "").strip()
         self.turn_server = os.environ.get("TURN_SERVER", "").strip()
         self.web_root = os.environ.get("WEB_ROOT", "/opt/cnc/web")
+        self.ice_servers = _browser_ice_servers(self.stun_server, self.turn_server)
         sink = os.environ.get("PULSE_SINK", "cnc_sink")
         self.pulse_monitor = os.environ.get("PULSE_MONITOR", f"{sink}.monitor")
         # How far, in remote pixels, the client should snap the pointer to the
@@ -172,6 +199,7 @@ class App:
                 "fps": self.cfg.fps,
                 "audio": self.cfg.audio_enabled,
                 "edgeSnapPx": self.cfg.edge_snap_px,
+                "iceServers": self.cfg.ice_servers,
             }
         )
 
@@ -201,6 +229,7 @@ class App:
                 "fps": self.cfg.fps,
                 "audio": self.cfg.audio_enabled,
                 "edgeSnapPx": self.cfg.edge_snap_px,
+                "iceServers": self.cfg.ice_servers,
             }
         )
 

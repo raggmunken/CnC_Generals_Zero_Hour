@@ -62,13 +62,20 @@ export WINEDEBUG="${WINEDEBUG:--all}"
 # makes the game window line up 1:1 with what we capture -- which the 3-pixel
 # edge-scroll band in LookAtTranslator depends on.
 ARGS=(-win -xres "${SCREEN_WIDTH}" -yres "${SCREEN_HEIGHT}")
+
+# Merge GAME_ARGS, dropping anything that would fight the geometry we just
+# pinned. -xres and -yres take a value, so their argument has to be dropped
+# with them or it would be passed to the game as a bare token.
 # shellcheck disable=SC2206
 EXTRA=( ${GAME_ARGS:-} )
-for a in "${EXTRA[@]:-}"; do
+skip_next=0
+for a in "${EXTRA[@]+"${EXTRA[@]}"}"; do
+    if [[ "${skip_next}" -eq 1 ]]; then skip_next=0; continue; fi
     case "$a" in
-        -win|-fullscreen|-xres|-yres) ;;   # never let the caller fight us here
-        "") ;;
-        *) ARGS+=("$a") ;;
+        -xres|-yres)      skip_next=1 ;;
+        -win|-fullscreen) ;;
+        "")               ;;
+        *)                ARGS+=("$a") ;;
     esac
 done
 

@@ -45,6 +45,7 @@
       this.lastFrames = -1;
       this.lastFrameChange = 0;
 
+      this.iceServers = [];
       this.pendingPings = new Map();
       this.pingSeq = 0;
       this.rtt = null;
@@ -80,8 +81,11 @@
       ws.onopen = () => {
         this.attempt = 0;
         this.onState('signalling', 'Negotiating stream…');
-        this._startPeer();
-        this._sendSignal({ t: 'start' });
+        // The peer connection is NOT built here. `hello` carries the ICE
+        // servers this host is configured with, and building the connection
+        // before it arrives would mean falling back to a hardcoded public STUN
+        // address that an offline or firewalled host cannot reach -- ICE
+        // gathering then stalls on a name it can never resolve.
       };
       ws.onmessage = (ev) => this._onSignal(ev.data);
       ws.onerror = () => { /* onclose always follows; report there */ };
@@ -147,7 +151,12 @@
 
       switch (msg.t) {
         case 'hello':
+          this.iceServers = Array.isArray(msg.iceServers) ? msg.iceServers : [];
           this.onHello(msg);
+          if (!this.pc) {
+            this._startPeer();
+            this._sendSignal({ t: 'start' });
+          }
           break;
 
         case 'sdp':
@@ -188,10 +197,10 @@
     // ----------------------------------------------------------- peer setup
     _startPeer() {
       const config = {
-        // The host is normally on the same LAN (or reached through a tunnel),
-        // so host candidates carry the day. A public STUN server is listed as
-        // a cheap fallback for a routed setup; it is never required.
-        iceServers: [{ urls: 'stun:stun.l.google.com:19302' }],
+        // Whatever the host was configured with, translated to RTCIceServer
+        // form server-side. On a LAN or through a tunnel this is usually empty
+        // and host candidates carry the day, which is the fastest path.
+        iceServers: this.iceServers || [],
         bundlePolicy: 'max-bundle',
         rtcpMuxPolicy: 'require',
       };

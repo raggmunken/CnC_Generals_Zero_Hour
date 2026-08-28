@@ -1,0 +1,4 @@
+# Local deployment state. Scoped to deploy/ so it cannot conflict with the
+# repository-root .gitignore.
+.env
+logs/

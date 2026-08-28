@@ -66,7 +66,7 @@ RUN set -eux; \
 RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
-        mesa-utils mesa-utils-bin \
+        mesa-utils \
         libgl1-mesa-dri libgl1-mesa-dri:i386 \
         libglx-mesa0 libglx-mesa0:i386 \
         libgl1 libgl1:i386 \
@@ -100,8 +100,7 @@ RUN set -eux; \
     apt-get update; \
     apt-get install -y --no-install-recommends \
         pulseaudio pulseaudio-utils \
-        libpulse0 libpulse0:i386 \
-        alsa-utils libasound2t64 libasound2t64:i386 libasound2-plugins:i386; \
+        libpulse0 libpulse0:i386; \
     rm -rf /var/lib/apt/lists/*
 
 # ---------------------------------------------------------------------------
@@ -133,7 +132,7 @@ RUN set -eux; \
         apt-get install -y --install-recommends "winehq-${WINE_BRANCH}"; \
     else \
         apt-get update; \
-        apt-get install -y --no-install-recommends wine wine32 wine64 libwine libwine:i386 fonts-wine; \
+        apt-get install -y --no-install-recommends wine wine64 wine32:i386 fonts-wine; \
     fi; \
     rm -rf /var/lib/apt/lists/*
 
@@ -163,7 +162,8 @@ RUN set -eux; \
 # ---------------------------------------------------------------------------
 # Application files
 # ---------------------------------------------------------------------------
-RUN useradd -m -u 1000 -s /bin/bash wine
+RUN useradd -m -u 1000 -s /bin/bash wine && \
+    install -d -m 1777 /tmp/.X11-unix
 
 # NOTE: the build context is the REPOSITORY ROOT, not deploy/, because the
 # browser client lives in the top-level web/ directory. deploy/run.sh and

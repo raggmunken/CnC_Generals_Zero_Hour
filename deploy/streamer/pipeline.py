@@ -107,7 +107,7 @@ class StreamPipeline:
         #     without this the player has no pointer at all.
         video = (
             f"ximagesrc display-name={c.display} use-damage=false "
-            f"show-pointer=true blocksize=65536 "
+            f"show-pointer=true "
             f"! video/x-raw,framerate={c.fps}/1 "
             f"! queue max-size-buffers=2 leaky=downstream "
             f"! videoconvert n-threads=4 "

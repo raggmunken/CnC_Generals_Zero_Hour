@@ -1,13 +1,21 @@
-# BuildKit honours <dockerfile>.dockerignore, so this file scopes the build
-# context even though the context root is the repository root.
-# Exclude everything, then re-include only what the image needs.
+# BuildKit honours <dockerfile>.dockerignore, so this scopes the build context
+# even though the context root is the repository root (the browser client lives
+# in top-level web/, outside deploy/).
+#
+# Exclude everything, then re-include only the two trees the image needs. This
+# keeps ~1 GB of game source out of the context, and makes it structurally
+# impossible to accidentally bake licensed content into the image.
 *
-!deploy/config
-!deploy/scripts
-!deploy/streamer
+!deploy
 !web
-# never ship licensed content or local state
+
+# ...and re-exclude local state inside those trees.
+deploy/logs
+deploy/.env
+deploy/**/*.log
+web/node_modules
+
+# Belt and braces: never send game assets, whatever the layout.
 **/*.big
 **/*.BIG
-**/.git
-**/node_modules
+**/*.bik
