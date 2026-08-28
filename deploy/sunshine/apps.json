@@ -1,0 +1,23 @@
+{
+  "env": {
+    "DISPLAY": ":0",
+    "PULSE_SERVER": "unix:/run/cnc/pulse/native"
+  },
+  "apps": [
+    {
+      "name": "Zero Hour (already running)",
+      "comment": "Attaches to the game the main container is already running. Sunshine launches nothing and stops nothing, so quitting the stream leaves the match alive.",
+      "image-path": "",
+      "cmd": "",
+      "auto-detach": true,
+      "wait-all": false,
+      "exclude-global-prep-cmd": true,
+      "elevated": false
+    },
+    {
+      "name": "Desktop",
+      "comment": "Raw X screen, for debugging what the game window is actually doing.",
+      "image-path": "desktop.png"
+    }
+  ]
+}

@@ -1,0 +1,35 @@
+# TLS terminator for the stream server.
+#
+# WebRTC, Pointer Lock and the Keyboard Lock API all require a secure context.
+# Over plain http:// to a remote host they all fail, and the symptoms look like
+# a broken stream rather than a browser policy. Either use an SSH tunnel so the
+# browser sees `localhost`, or terminate TLS here.
+#
+# `tls internal` mints a certificate from Caddy's own local CA. You will get a
+# browser warning the first time unless you install that CA:
+#   docker compose cp tls:/data/caddy/pki/authorities/local/root.crt .
+#
+# Replace the address with a real hostname if you have one, and Caddy will
+# fetch a public certificate automatically.
+
+:8443 {
+	tls internal
+
+	# WebSocket upgrades must pass through untouched.
+	reverse_proxy 127.0.0.1:8080 {
+		header_up Host {host}
+		header_up X-Forwarded-For {remote_host}
+		header_up X-Forwarded-Proto {scheme}
+		# The stream is long-lived; do not let the proxy time it out.
+		transport http {
+			read_timeout 0
+			write_timeout 0
+		}
+	}
+
+	encode gzip
+	log {
+		output stderr
+		level WARN
+	}
+}

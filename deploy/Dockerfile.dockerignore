@@ -1,0 +1,13 @@
+# BuildKit honours <dockerfile>.dockerignore, so this file scopes the build
+# context even though the context root is the repository root.
+# Exclude everything, then re-include only what the image needs.
+*
+!deploy/config
+!deploy/scripts
+!deploy/streamer
+!web
+# never ship licensed content or local state
+**/*.big
+**/*.BIG
+**/.git
+**/node_modules

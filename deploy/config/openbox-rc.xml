@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  Minimal openbox config for headless game capture.
+
+  The only jobs openbox has here are (a) give the Wine window X input focus so
+  the game's WM_ACTIVATE path runs, and (b) draw nothing. Any decoration would
+  shift the game's client area off the top-left of the captured screen and
+  break the 3-pixel edge-scroll band the RTS camera relies on.
+-->
+<openbox_config xmlns="http://openbox.org/3.4/rc">
+  <resistance>
+    <strength>0</strength>
+    <screen_edge_strength>0</screen_edge_strength>
+  </resistance>
+  <focus>
+    <focusNew>yes</focusNew>
+    <followMouse>yes</followMouse>
+    <focusLast>yes</focusLast>
+    <underMouse>yes</underMouse>
+    <focusDelay>0</focusDelay>
+    <raiseOnFocus>yes</raiseOnFocus>
+  </focus>
+  <placement>
+    <policy>UnderMouse</policy>
+    <center>no</center>
+  </placement>
+  <theme>
+    <name>Clearlooks</name>
+    <keepBorder>no</keepBorder>
+    <animateIconify>no</animateIconify>
+    <titleLayout></titleLayout>
+  </theme>
+  <desktops>
+    <number>1</number>
+    <firstdesk>1</firstdesk>
+    <popupTime>0</popupTime>
+  </desktops>
+  <margins><top>0</top><bottom>0</bottom><left>0</left><right>0</right></margins>
+  <!-- No keybindings at all: every keystroke must reach the game, including
+       Alt+F4, Alt+Tab and the Ctrl+digit control-group chords. -->
+  <keyboard></keyboard>
+  <mouse>
+    <dragThreshold>1</dragThreshold>
+    <doubleClickTime>200</doubleClickTime>
+  </mouse>
+  <applications>
+    <application class="*">
+      <decor>no</decor>
+      <shade>no</shade>
+      <position force="yes"><x>0</x><y>0</y></position>
+      <focus>yes</focus>
+      <layer>normal</layer>
+    </application>
+  </applications>
+</openbox_config>

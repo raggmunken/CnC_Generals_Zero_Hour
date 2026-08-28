@@ -1,0 +1,147 @@
+# ---------------------------------------------------------------------------
+# Command & Conquer: Generals Zero Hour -- browser delivery, Phase 1
+#
+#   docker compose --env-file .env up --build
+#
+# Copy .env.example to .env first and set GAME_PATH to your Zero Hour install.
+# The install and its .BIG archives are BIND-MOUNTED read-only; nothing
+# licensed is ever copied into the image.
+# ---------------------------------------------------------------------------
+
+services:
+  game:
+    build:
+      # The context is the repository root because the browser client lives in
+      # the top-level web/ directory. deploy/Dockerfile.dockerignore keeps the
+      # game source out of the context.
+      context: ..
+      dockerfile: deploy/Dockerfile
+      args:
+        WINE_BRANCH: ${WINE_BRANCH:-staging}
+        WINE_SOURCE: ${WINE_SOURCE:-winehq}
+        DXVK_VERSION: ${DXVK_VERSION:-2.7.1}
+        MESA_PPA: ${MESA_PPA:-0}
+    image: cnc-web:phase1
+    container_name: cnc-web
+
+    # Host networking is the default on purpose. WebRTC negotiates ICE host
+    # candidates using the addresses the container can see; on a bridge network
+    # those are 172.x addresses your browser cannot route to, and the video
+    # never starts even though signalling looks perfectly healthy. Host
+    # networking makes the server's real address a valid candidate.
+    #
+    # If you must use bridge networking, comment this out, uncomment the
+    # `ports` block below, and be prepared to add a TURN server.
+    network_mode: host
+    # ports:
+    #   - "${STREAM_PORT:-8080}:8080"
+
+    volumes:
+      # --- your game install: licensed content, mounted, never baked in ---
+      - type: bind
+        source: ${GAME_PATH:?set GAME_PATH in .env to your Zero Hour install}
+        target: /game
+        read_only: true
+      # --- Wine prefix: registry, DXVK shader cache, Options.ini, saves ---
+      - wineprefix:/prefix
+      # --- logs, so you can read them without exec-ing in ---
+      - ./logs:/var/log/cnc
+
+    environment:
+      # Display / capture geometry. The Xvfb screen, the game's -xres/-yres and
+      # the encoder all use this single pair of numbers; they must agree or the
+      # 3-pixel edge-scroll band stops lining up with the picture edge.
+      SCREEN_WIDTH: ${SCREEN_WIDTH:-1600}
+      SCREEN_HEIGHT: ${SCREEN_HEIGHT:-900}
+      SCREEN_DEPTH: "24"
+      GAME_FPS: ${GAME_FPS:-30}
+
+      # Game
+      GAME_DIR: /game
+      GAME_EXE: ${GAME_EXE:-game.dat}
+      GAME_ARGS: ${GAME_ARGS:--quickstart}
+
+      # Wine
+      WINEPREFIX: /prefix
+      WINEARCH: ${WINEARCH:-win64}
+      WINEDEBUG: ${WINEDEBUG:--all}
+
+      # Rendering: dxvk (D3D8 -> Vulkan) or wined3d (D3D8 -> OpenGL).
+      # wined3d is the safer choice with no GPU: llvmpipe's OpenGL is far more
+      # mature than lavapipe's Vulkan, and DXVK's D3D8 layer is comparatively
+      # young.
+      RENDERER: ${RENDERER:-dxvk}
+      GPU: ${GPU:-none}
+
+      # Encoding
+      ENCODER: ${ENCODER:-x264}
+      ENCODER_PRESET: ${ENCODER_PRESET:-veryfast}
+      VIDEO_BITRATE_KBPS: ${VIDEO_BITRATE_KBPS:-12000}
+      AUDIO_ENABLED: ${AUDIO_ENABLED:-1}
+
+      # Transport
+      STREAM_PORT: ${STREAM_PORT:-8080}
+      STUN_SERVER: ${STUN_SERVER:-stun://stun.l.google.com:19302}
+      TURN_SERVER: ${TURN_SERVER:-}
+      EDGE_SNAP_PX: ${EDGE_SNAP_PX:-4}
+
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+
+    # For GPU=dri, uncomment the block below to pass the host's render nodes
+    # through. Leave it commented for software rendering (GPU=none).
+    # devices:
+    #   - /dev/dri:/dev/dri
+    # group_add:
+    #   - "${RENDER_GID:-video}"
+
+    # Wine's memory layout for a 32-bit process wants a large mapping range,
+    # and the encoder is happier without a tight limit.
+    shm_size: "512m"
+    ipc: host
+
+    # Wine spawns threads liberally; the default 1024 pid limit is tight once
+    # the encoder is running alongside it.
+    pids_limit: 4096
+
+    ulimits:
+      nofile:
+        soft: 8192
+        hard: 8192
+
+    stop_grace_period: 20s
+    restart: unless-stopped
+
+    healthcheck:
+      test: ["CMD", "/opt/cnc/scripts/healthcheck.sh"]
+      interval: 20s
+      timeout: 5s
+      start_period: 120s
+      retries: 5
+
+  # -------------------------------------------------------------------------
+  # Optional: TLS terminator.
+  #
+  # WebRTC, pointer lock and the Keyboard Lock API all require a secure
+  # context. Reaching the host over plain http:// from another machine breaks
+  # all three. Either tunnel (ssh -L 8080:localhost:8080 host) so the browser
+  # sees localhost, or run this and accept the local CA once.
+  #
+  #   docker compose --profile tls up
+  # -------------------------------------------------------------------------
+  tls:
+    profiles: ["tls"]
+    image: caddy:2-alpine
+    container_name: cnc-tls
+    network_mode: host
+    volumes:
+      - ./config/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddydata:/data
+      - caddyconfig:/config
+    depends_on:
+      - game
+    restart: unless-stopped
+
+volumes:
+  wineprefix:
+  caddydata:
+  caddyconfig:

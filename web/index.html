@@ -1,0 +1,93 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=1, user-scalable=no, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>Generals Zero Hour &mdash; Web Client</title>
+<link rel="stylesheet" href="/css/style.css">
+</head>
+<body>
+
+<div id="stage">
+  <!--
+    playsinline + muted are required for autoplay on mobile Safari; the
+    "Connect" gesture unmutes. disablepictureinpicture and controlslist keep
+    the browser from painting its own UI over the game.
+  -->
+  <video id="video" playsinline autoplay muted
+         disablepictureinpicture
+         controlslist="nodownload nofullscreen noremoteplayback"></video>
+  <div id="cursor-blocker"></div>
+</div>
+
+<!-- ------------------------------------------------------------------ -->
+<!-- Overlay: shown before capture and whenever the link is unhealthy.   -->
+<!-- ------------------------------------------------------------------ -->
+<div id="overlay" class="visible">
+  <div class="panel">
+    <h1>Command &amp; Conquer: Generals <span>Zero Hour</span></h1>
+    <p class="status" id="status-line">Connecting&hellip;</p>
+
+    <button id="connect-btn" class="primary" disabled>Connect</button>
+
+    <div class="options">
+      <label>
+        <input type="checkbox" id="opt-pointerlock" checked>
+        <span>Lock pointer <em>&mdash; keeps the mouse inside the battlefield</em></span>
+      </label>
+      <label>
+        <input type="checkbox" id="opt-fullscreen" checked>
+        <span>Fullscreen + keyboard lock <em>&mdash; needed for Ctrl+1&hellip;9 control groups</em></span>
+      </label>
+      <label>
+        <input type="checkbox" id="opt-audio" checked>
+        <span>Audio</span>
+      </label>
+      <label class="range">
+        <span>Mouse sensitivity <b id="sens-value">1.00</b></span>
+        <input type="range" id="opt-sens" min="0.4" max="2.5" step="0.05" value="1">
+      </label>
+    </div>
+
+    <details class="help">
+      <summary>Controls &amp; caveats</summary>
+      <ul>
+        <li><b>Edge scrolling</b> works by pushing the pointer into the outer few
+            pixels of the picture; the client snaps it onto the exact edge column
+            for you.</li>
+        <li><b>Ctrl+1&hellip;9</b> (control groups) is reserved by the browser for tab
+            switching unless keyboard lock is active, which requires fullscreen.
+            If the badge below reads <i>keyboard: partial</i>, control groups will
+            switch your tabs instead.</li>
+        <li><b>Escape</b> reaches the game while keyboard lock is on. Hold it to
+            leave fullscreen.</li>
+        <li><b>Ctrl+Alt+Q</b> always releases the capture and is never sent to the
+            game.</li>
+      </ul>
+    </details>
+
+    <p class="secure-warning" id="secure-warning" hidden>
+      This page is not in a secure context. WebRTC, pointer lock and keyboard
+      lock all require HTTPS or <code>localhost</code>. Reach the host through
+      an SSH tunnel, or put a TLS proxy in front of it.
+    </p>
+  </div>
+</div>
+
+<!-- ------------------------------------------------------------------ -->
+<!-- HUD                                                                 -->
+<!-- ------------------------------------------------------------------ -->
+<div id="hud" hidden>
+  <span class="badge" id="hud-state">&mdash;</span>
+  <span class="badge" id="hud-rtt">rtt &mdash;</span>
+  <span class="badge" id="hud-video">&mdash;</span>
+  <span class="badge" id="hud-keyboard">keyboard: ?</span>
+  <span class="badge hint">Ctrl+Alt+Q to release</span>
+</div>
+
+<script src="/js/input.js"></script>
+<script src="/js/client.js"></script>
+<script src="/js/app.js"></script>
+</body>
+</html>

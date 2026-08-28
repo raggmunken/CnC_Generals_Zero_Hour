@@ -1,0 +1,40 @@
+# Optional override: run Sunshine alongside the game container so a NATIVE
+# Moonlight client can attach to the same X display. This exists as a latency
+# yardstick for the browser path, not as a way to reach a browser -- Sunshine
+# speaks GameStream, which no browser can decode. See NOTES.md.
+#
+#   docker compose -f docker-compose.yml \
+#                  -f sunshine/docker-compose.sunshine.yml \
+#                  --profile sunshine up -d
+#
+# Requires the x11socket and pulsesock volumes to be added to the `game`
+# service first; see NOTES.md step 1.
+
+services:
+  sunshine:
+    profiles: ["sunshine"]
+    image: ghcr.io/lizardbyte/sunshine:latest-ubuntu-24.04
+    container_name: cnc-sunshine
+    network_mode: host
+    depends_on:
+      - game
+    environment:
+      DISPLAY: ":0"
+      PULSE_SERVER: "unix:/run/cnc/pulse/native"
+      XDG_RUNTIME_DIR: /run/cnc
+    volumes:
+      - x11socket:/tmp/.X11-unix
+      - pulsesock:/run/cnc/pulse
+      - ./sunshine/sunshine.conf:/config/sunshine.conf
+      - ./sunshine/apps.json:/config/apps.json
+      - sunshine-state:/config/state
+    # Sunshine injects input through uinput. Not needed for the browser path;
+    # required if you want gamepad emulation through Moonlight.
+    # devices:
+    #   - /dev/uinput:/dev/uinput
+    restart: unless-stopped
+
+volumes:
+  x11socket:
+  pulsesock:
+  sunshine-state:
