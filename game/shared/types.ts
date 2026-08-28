@@ -186,6 +186,13 @@ export interface Unit {
   order?: Order;
   /** Ticks until this unit may fire again. */
   cooldown?: number;
+  /** Remaining waypoints from the pathfinder. */
+  path?: Array<{ x: number; y: number }>;
+  /** Destination the current path was computed for. */
+  pathGoalX?: number;
+  pathGoalY?: number;
+  /** Ticks spent making no progress, used to trigger a repath. */
+  stuckFor?: number;
   /**
    * True while the unit is under automatic control.
    *

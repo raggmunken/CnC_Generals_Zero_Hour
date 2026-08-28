@@ -236,19 +236,64 @@ function run(sim: Sim, seconds: number): void {
 
 {
   const sim = flatSim(1);
-  // A building in the way must actually stop a unit, not be walked through.
-  // A command centre: 3x3 and the one structure with no prerequisites.
+  // A building in the way must be routed around, never walked through.
   const wall = sim.placeBuilding(0, "command_center", 24, 18)!;
   wall.buildRemaining = 0;
   const u = sim.spawnUnit(0, "infantry", 20, 19.5);
   sim.issueMove(0, [u.id], 34, 19.5);
-  for (let i = 0; i < 20 * TICK_RATE; i++) sim.step();
 
-  check(
-    "a unit cannot walk through a building",
-    u.x < 24,
-    `x=${u.x.toFixed(2)} (building spans 24..27)`,
-  );
+  let everInside = false;
+  for (let i = 0; i < 30 * TICK_RATE; i++) {
+    sim.step();
+    // The footprint spans 24..27 on both axes.
+    if (u.x > 24 && u.x < 27 && u.y > 18 && u.y < 21) everInside = true;
+  }
+
+  check("a unit never enters a building footprint", !everInside, `ended at ${u.x.toFixed(1)},${u.y.toFixed(1)}`);
+  check("and still reaches the far side", u.x > 30, `x=${u.x.toFixed(1)}`);
+}
+
+// -- pathfinding -----------------------------------------------------------
+{
+  // A wall of mountain with one gap: direct steering presses into it forever,
+  // A* goes through the gap. This is the whole reason pathfinding exists.
+  const size = 64;
+  const map = { width: size, height: size, tiles: new Uint8Array(size * size) };
+  map.tiles.fill(Terrain.Ground);
+  for (let y = 0; y < size; y++) {
+    if (y >= 40 && y <= 44) continue; // the gap
+    map.tiles[y * size + 32] = Terrain.Mountain;
+    map.tiles[y * size + 33] = Terrain.Mountain;
+  }
+
+  const sim = new Sim(map);
+  sim.addPlayer({ id: 0, name: "P1", faction: "usa", team: 0 });
+  const u = sim.spawnUnit(0, "tank", 20, 10);
+  sim.issueMove(0, [u.id], 50, 10);
+
+  check("a route around the wall was found", (u.path?.length ?? 0) > 0, `waypoints=${u.path?.length ?? 0}`);
+
+  let arrived = false;
+  for (let i = 0; i < 90 * TICK_RATE; i++) {
+    sim.step();
+    if (Math.hypot(u.x - 50, u.y - 10) < 1.5) { arrived = true; break; }
+  }
+  check("the unit got through the gap to the far side", arrived, `at ${u.x.toFixed(1)},${u.y.toFixed(1)}`);
+}
+
+{
+  // A sealed pocket has no route. The unit must not crash or spin.
+  const size = 32;
+  const map = { width: size, height: size, tiles: new Uint8Array(size * size) };
+  map.tiles.fill(Terrain.Ground);
+  for (let y = 0; y < size; y++) { map.tiles[y * size + 16] = Terrain.Mountain; }
+
+  const sim = new Sim(map);
+  sim.addPlayer({ id: 0, name: "P1", faction: "usa", team: 0 });
+  const u = sim.spawnUnit(0, "infantry", 5, 5);
+  sim.issueMove(0, [u.id], 25, 5);
+  for (let i = 0; i < 10 * TICK_RATE; i++) sim.step();
+  check("an unreachable order does not break the unit", u.x < 16 && Number.isFinite(u.x), `x=${u.x.toFixed(1)}`);
 }
 
 // -- map presets -----------------------------------------------------------

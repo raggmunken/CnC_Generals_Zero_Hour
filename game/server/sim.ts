@@ -7,6 +7,7 @@
  * loop with no clients attached.
  */
 import { acquireTarget, canHarm, damageFor, rangeTo, type Combatant } from "./combat.js";
+import { findPath, smoothPath } from "./pathfind.js";
 import {
   BUILDINGS,
   buildingDef,
@@ -56,8 +57,80 @@ export class Sim {
   private nextUnitId = 1;
   private nextBuildingId = 1;
 
+  /** 1 where nothing can stand: impassable terrain or a building footprint. */
+  private blocked: Uint8Array;
+  /** Set when buildings change, so the grid is rebuilt at most once a tick. */
+  private blockedDirty = true;
+
   constructor(map: MapData) {
     this.map = map;
+    this.blocked = new Uint8Array(map.width * map.height);
+    this.rebuildBlocked();
+  }
+
+  /**
+   * Recompute the pathfinding grid.
+   *
+   * Cached rather than tested per query: buildings change rarely and paths are
+   * requested constantly, so the cost belongs on the write side.
+   */
+  private rebuildBlocked(): void {
+    const { width, height, tiles } = this.map;
+    for (let i = 0; i < tiles.length; i++) {
+      this.blocked[i] = isPassable(tiles[i] as Terrain) ? 0 : 1;
+    }
+    for (const b of this.buildings.values()) {
+      const size = buildingDef(b.type).size;
+      for (let y = b.y; y < b.y + size; y++) {
+        for (let x = b.x; x < b.x + size; x++) {
+          if (x < 0 || y < 0 || x >= width || y >= height) continue;
+          this.blocked[y * width + x] = 1;
+        }
+      }
+    }
+    this.blockedDirty = false;
+  }
+
+  /**
+   * Send a unit somewhere, routing around obstacles.
+   *
+   * The single entry point for "go here", so every caller gets pathfinding
+   * rather than only the ones that remembered to ask. Re-pathing is skipped
+   * when the goal has barely moved, which is what stops a unit chasing a
+   * moving target from recomputing a full route every tick.
+   */
+  private setDestination(u: Unit, x: number, y: number): void {
+    u.targetX = x;
+    u.targetY = y;
+
+    const sameGoal =
+      u.pathGoalX !== undefined &&
+      Math.hypot(u.pathGoalX - x, (u.pathGoalY ?? 0) - y) < 1.0;
+    if (sameGoal && u.path && u.path.length > 0) return;
+
+    if (this.blockedDirty) this.rebuildBlocked();
+
+    const raw = findPath(this.blocked, this.map.width, this.map.height, u, { x, y });
+    if (raw === null) {
+      // Nowhere to go: keep the destination so the unit still nudges toward it
+      // via direct steering, rather than freezing with no explanation.
+      u.path = undefined;
+    } else {
+      const smoothed = smoothPath(this.blocked, this.map.width, this.map.height, u, raw);
+      // The final waypoint is the tile centre; use the true destination so
+      // units stop where they were told, not where the grid rounded to.
+      if (smoothed.length > 0) smoothed[smoothed.length - 1] = { x, y };
+      u.path = smoothed;
+    }
+    u.pathGoalX = x;
+    u.pathGoalY = y;
+    u.stuckFor = 0;
+  }
+
+  private clearPath(u: Unit): void {
+    u.path = undefined;
+    u.pathGoalX = undefined;
+    u.pathGoalY = undefined;
   }
 
   addPlayer(p: PlayerState): void {
@@ -211,9 +284,9 @@ export class Sim {
       if (order.kind === "attack") {
         u.targetX = null;
         u.targetY = null;
+        this.clearPath(u);
       } else {
-        u.targetX = order.x;
-        u.targetY = order.y;
+        this.setDestination(u, order.x, order.y);
       }
       // A direct order takes a harvester off automatic, so it stays where it
       // was sent instead of immediately wandering back to the nearest pile.
@@ -300,8 +373,7 @@ export class Sim {
           target = null;
         } else if (rangeTo(u, target) > weapon.range) {
           // Close the distance rather than firing into nothing.
-          u.targetX = target.x;
-          u.targetY = target.y;
+          this.setDestination(u, target.x, target.y);
           continue;
         } else {
           u.targetX = null;
@@ -322,8 +394,7 @@ export class Sim {
       if (!target) {
         // Attack-move with nothing in range: carry on to the destination.
         if (u.order?.kind === "attackMove") {
-          u.targetX = u.order.x;
-          u.targetY = u.order.y;
+          this.setDestination(u, u.order.x, u.order.y);
         }
         continue;
       }
@@ -373,6 +444,7 @@ export class Sim {
 
     for (const id of deadUnits) this.units.delete(id);
     for (const id of deadBuildings) this.buildings.delete(id);
+    if (deadBuildings.length > 0) this.markBlockedDirty();
 
     const deadU = new Set(deadUnits);
     const deadB = new Set(deadBuildings);
@@ -469,6 +541,7 @@ export class Sim {
       queue: [],
     };
     this.buildings.set(b.id, b);
+    this.markBlockedDirty();
     return b;
   }
 
@@ -491,6 +564,10 @@ export class Sim {
   }
 
   /** Recompute power for every player from their completed buildings. */
+  private markBlockedDirty(): void {
+    this.blockedDirty = true;
+  }
+
   private recomputePower(): void {
     for (const e of this.economies.values()) {
       e.powerProduced = 0;
@@ -622,8 +699,7 @@ export class Sim {
           u.targetX = null;
           u.targetY = null;
         } else {
-          u.targetX = node.x;
-          u.targetY = node.y;
+          this.setDestination(u, node.x, node.y);
         }
         return;
       }
@@ -653,8 +729,7 @@ export class Sim {
           u.targetX = null;
           u.targetY = null;
         } else {
-          u.targetX = dx;
-          u.targetY = dy;
+          this.setDestination(u, dx, dy);
         }
         return;
       }
@@ -682,25 +757,38 @@ export class Sim {
   }
 
   /**
-   * Steer one unit toward its target.
+   * Move one unit one step along its route.
    *
-   * Phase A uses direct steering with a terrain check rather than pathfinding:
-   * enough to prove the stack, and the axis-separated retry below keeps a unit
-   * sliding along an obstacle instead of sticking to it, which is what makes
-   * simple steering tolerable until A* lands in Phase B.
+   * Follows pathfinder waypoints when it has them and falls back to steering
+   * straight at the destination when it does not -- an unreachable goal should
+   * still make the unit walk as close as it can rather than freeze.
    */
   private moveUnit(u: Unit): void {
     if (u.targetX === null || u.targetY === null) return;
 
-    const dx = u.targetX - u.x;
-    const dy = u.targetY - u.y;
+    // Waypoints are consumed as they are reached; the last one is the goal.
+    let wx = u.targetX;
+    let wy = u.targetY;
+    if (u.path && u.path.length > 0) {
+      const wp = u.path[0]!;
+      wx = wp.x;
+      wy = wp.y;
+    }
+
+    const dx = wx - u.x;
+    const dy = wy - u.y;
     const dist = Math.hypot(dx, dy);
 
     if (dist <= ARRIVE_EPSILON) {
+      if (u.path && u.path.length > 0) {
+        u.path.shift();
+        if (u.path.length > 0) return; // straight on to the next waypoint
+      }
       u.x = u.targetX;
       u.y = u.targetY;
       u.targetX = null;
       u.targetY = null;
+      this.clearPath(u);
       return;
     }
 
@@ -710,6 +798,9 @@ export class Sim {
     const nx = u.x + (dx / dist) * travel;
     const ny = u.y + (dy / dist) * travel;
     const r = def.radius;
+
+    const beforeX = u.x;
+    const beforeY = u.y;
 
     // If the unit is already inside an obstacle -- a building finished on top
     // of it, or a bad spawn -- let it move regardless, or it is stuck forever.
@@ -722,23 +813,30 @@ export class Sim {
     if (!this.isBlockedFor(nx, ny, r)) {
       u.x = nx;
       u.y = ny;
-      return;
-    }
-
-    // Blocked head-on: try each axis alone so the unit slides along the
-    // obstacle rather than stopping dead against it.
-    if (!this.isBlockedFor(nx, u.y, r)) {
+    } else if (!this.isBlockedFor(nx, u.y, r)) {
+      // Blocked head-on: try each axis alone so the unit slides along the
+      // obstacle rather than stopping dead against it.
       u.x = nx;
-      return;
-    }
-    if (!this.isBlockedFor(u.x, ny, r)) {
+    } else if (!this.isBlockedFor(u.x, ny, r)) {
       u.y = ny;
-      return;
     }
 
-    // Genuinely stuck -- drop the order so the unit does not vibrate forever.
-    u.targetX = null;
-    u.targetY = null;
+    // Progress check. A unit pressed against geometry its path did not
+    // anticipate -- another unit parked in a gap, a building raised across the
+    // route -- recovers by asking for a new route rather than grinding.
+    const moved = Math.hypot(u.x - beforeX, u.y - beforeY);
+    if (moved < travel * 0.25) {
+      u.stuckFor = (u.stuckFor ?? 0) + 1;
+      if (u.stuckFor > TICK_RATE) {
+        const gx = u.targetX;
+        const gy = u.targetY;
+        this.clearPath(u);
+        if (gx !== null && gy !== null) this.setDestination(u, gx, gy);
+        u.stuckFor = 0;
+      }
+    } else {
+      u.stuckFor = 0;
+    }
   }
 
   snapshotUnits(): Unit[] {
