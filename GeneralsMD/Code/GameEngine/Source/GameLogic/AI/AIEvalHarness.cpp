@@ -97,7 +97,7 @@ void AIEvalHarness::report( const char *reason, Player *winner )
 	FILE *f = fopen( TheGlobalData->m_aiEvalOutputFile.str(), "a" );
 	if( f == NULL )
 	{
-		DEBUG_LOG(( "AIEvalHarness: could not open '%s' for append\n",
+		DEBUG_LOG(( "AIEvalHarness: could not open '%s' for append",
 								TheGlobalData->m_aiEvalOutputFile.str() ));
 		TheGameEngine->setQuitting( TRUE );
 		return;

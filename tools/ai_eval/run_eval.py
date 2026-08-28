@@ -100,7 +100,12 @@ def run_match(exe, mapfile, smart_players, max_frames, record_path,
         exe,
         "-file", mapfile,
         "-forceSkirmishAI",
+        # -noDraw is what this tree un-gates; -headless is the first-class
+        # renderless mode in the TheSuperHackers fork. Passing both means one
+        # command line works against either binary -- unrecognised flags are
+        # skipped by the parser in both.
         "-noDraw",
+        "-headless",
         "-noaudio",
         "-noshellmap",
         "-quickstart",

@@ -156,9 +156,60 @@ The fork lists sources explicitly — it does **not** glob — so the three new
     Source/GameLogic/AI/SkirmishEnemyModel.cpp
 ```
 
-Headers and the wiring changes (GlobalData, CommandLine, Player, GameLogic,
-MemoryInit) port across unchanged — the fork keeps the same paths under
-`GeneralsMD/Code/GameEngine/`.
+### Where the wiring actually goes in the fork
+
+The fork has been refactored since EA's drop: code shared between Generals and
+Zero Hour now lives under `Core/`, compiled once per game as INTERFACE sources
+into `g_gameengine` and `z_gameengine`. The wiring does **not** land at the
+same paths as in this tree.
+
+| Change | This tree | Fork |
+|---|---|---|
+| New fields | `GeneralsMD/.../Include/Common/GlobalData.h` | same path, **plus** `Generals/.../Include/Common/GlobalData.h` |
+| Field init | `GeneralsMD/.../Source/Common/GlobalData.cpp` | same path, **plus** the `Generals/` copy |
+| Flag parsing | `GeneralsMD/.../Source/Common/CommandLine.cpp` | `Core/GameEngine/Source/Common/CommandLine.cpp` |
+| Memory pool | `GeneralsMD/.../Source/Common/System/MemoryInit.cpp` | `Core/GameEngine/Source/Common/System/GameMemoryInitPools_GeneralsMD.inl` |
+| `setPlayerType` | `GeneralsMD/.../Source/Common/RTS/Player.cpp` | same path |
+| Harness hooks | `GeneralsMD/.../Source/GameLogic/System/GameLogic.cpp` | same path |
+
+`CommandLine.cpp` being shared is the one that bites: it is compiled for both
+games, so the four `GlobalData` fields must exist in **both** `GlobalData.h`
+files or the Generals build breaks. The AI classes themselves stay Zero Hour
+only; Generals just carries four unread fields.
+
+The new flags go in `paramsForEngineInit` **above** the `#if defined(RTS_DEBUG)`
+block. Everything below it is debug-only, and batch evaluation runs against a
+Release build.
+
+### Do not port the `-noDraw` un-gate to the fork
+
+The fork already has a first-class `-headless` mode (`MouseDummy`,
+`GameWindowManagerDummy`, dummy audio/particles/view) in `paramsForStartup`,
+unconditional in Release and exercised in upstream CI. Use that instead; the
+un-gate below is redundant there and its `-noDraw` entry stays inside the
+fork's `RTS_DEBUG` param block. `tools/ai_eval/run_eval.py` passes both flags,
+so one command line works against either binary.
+
+### Verified result
+
+Against TheSuperHackers/GeneralsGameCode at `45178ee`, the **full Zero Hour
+executable links** with all of the above applied:
+
+```sh
+cmake --preset mingw-w64-i686
+cmake --build build/mingw-w64-i686 --target z_generals -j4
+# -> build/mingw-w64-i686/GeneralsMD/generalszh.exe  (PE32, i386)
+```
+
+`nm` confirms `AISmartSkirmishPlayer::selectTeamToBuild()`,
+`SkirmishEnemyModel::observe(Player*)` and `AIEvalHarness::update()` are in
+`libz_gameengine.a`, that `Player.cpp.obj` carries an undefined reference to
+`AISmartSkirmishPlayer::AISmartSkirmishPlayer(Player*)`, and that all five new
+flag strings survive into the stripped binary. The three AI translation units
+compile with zero warnings of their own.
+
+The engine has **not been run** — no `.BIG` assets are available in that
+environment — so nothing here is a claim about runtime behaviour.
 
 The `.dsp` in this tree is also updated, but the VS6 project is not a realistic
 build path for this work.
@@ -211,9 +262,11 @@ New flags:
 | `-smartAIPlayers a,b` | per-player smart AI assignment |
 
 `-noDraw` was previously a no-op: its body sat inside `#ifdef DEBUG_CRC`, so it
-did nothing in a release build. It is now un-gated, since batch evaluation needs
-renderless runs from a normal build and `m_noDraw` is only read by the display
-path. (`-jumpToFrame N` also sets it, and remains the way to fast-forward.)
+did nothing in a release build. It is now un-gated **in this tree**, since batch
+evaluation needs renderless runs from a normal build and `m_noDraw` is only read
+by the display path. (`-jumpToFrame N` also sets it, and remains the way to
+fast-forward.) The fork does not need this change — it has `-headless`; see
+"Do not port the `-noDraw` un-gate to the fork" above.
 
 ## Record format
 
