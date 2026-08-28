@@ -252,3 +252,25 @@ Moved it to immediately after the first known-good selection.
 
 Claude: Audit now 37 working, 0 broken, 5 not implemented. Remaining: aircraft
 (deferred by the user), lobby UI, save/replays, sound, veterancy/stealth.
+
+Claude: Added a lobby. The server now builds matches through `startMatch()`
+rather than at boot, so a restart constructs a whole new match object instead
+of mutating the old one — stale bots ticking a dead simulation is the kind of
+bug that only surfaces as inexplicable behaviour three games later.
+
+Claude: ISSUE FOUND AND FIXED — the WebSocket close handler deleted the player
+id captured when the socket connected. A lobby restart re-seats everyone, so
+that id may since have been reassigned, and a leaver would have freed somebody
+else's slot. It now looks the socket up instead.
+
+Claude: The lobby caps bot choices at players-1. Offering a count the server
+would silently clamp is worse than not offering it, because the player cannot
+tell whether their choice took effect. Any player may restart: this is a game
+for you and people you invited, so host privileges would be ceremony.
+
+Claude: A welcome message can now arrive mid-session, so the client drops
+everything carried over from the previous match — selection, control groups,
+placement mode, fog, remembered buildings.
+
+Claude: Audit now 37 working, 0 broken, 4 not implemented. Remaining: aircraft
+(deferred by the user), save/replays, sound, veterancy/stealth.

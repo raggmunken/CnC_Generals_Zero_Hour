@@ -331,7 +331,6 @@ gap("aircraft", "the air armour class, flak weapons and AA battery exist, but no
 gap("save/load and replays", "no persistence of any kind");
 gap("sound", "no audio at all");
 gap("unit veterancy and stealth", "deliberately out of scope for now");
-gap("lobby", "map, bot count and difficulty come from env vars, not a UI");
 
 console.log(
   `\n${pass} working, ${failed.length} broken, ${missing.length} not implemented` +

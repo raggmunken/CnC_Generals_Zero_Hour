@@ -23,6 +23,41 @@
         pointer-events: none;
         white-space: pre;
       }
+      #lobby-open {
+        position: fixed; top: 0; right: 220px;
+        background: rgba(10, 14, 8, 0.86); color: #cfe0c3;
+        border: 1px solid #39442e; border-bottom-left-radius: 6px;
+        border-top: 0; border-right: 0;
+        padding: 7px 12px; font: inherit; letter-spacing: 1px; cursor: pointer;
+      }
+      #lobby-open:hover { background: #2e3a25; }
+      #lobby {
+        position: fixed; inset: 0; z-index: 10;
+        background: rgba(6, 9, 5, 0.72);
+        display: flex; align-items: center; justify-content: center;
+      }
+      #lobby[hidden] { display: none; }
+      .lobby-card {
+        background: #1a2016; border: 1px solid #3c4a33; border-radius: 8px;
+        padding: 22px 24px; width: 320px;
+      }
+      .lobby-card h2 { font-size: 15px; letter-spacing: 2px; margin-bottom: 16px; color: #9fe870; }
+      .lobby-card label {
+        display: flex; justify-content: space-between; align-items: center;
+        margin-bottom: 10px; gap: 12px;
+      }
+      .lobby-card select, .lobby-card input {
+        background: #232b1c; color: #cfe0c3; border: 1px solid #39442e;
+        border-radius: 4px; padding: 5px 8px; font: inherit; width: 130px;
+      }
+      .lobby-card .note { opacity: .55; font-size: 11px; margin: 12px 0 16px; }
+      .lobby-actions { display: flex; gap: 8px; justify-content: flex-end; }
+      .lobby-actions button {
+        background: #33421f; color: #e6f0de; border: 1px solid #5c7049;
+        border-radius: 4px; padding: 7px 16px; font: inherit; cursor: pointer;
+      }
+      .lobby-actions button.ghost { background: #232b1c; border-color: #39442e; }
+      .lobby-actions button:hover { filter: brightness(1.2); }
       #minimap {
         position: fixed; bottom: 0; left: 0;
         width: 200px; height: 200px;
@@ -65,6 +100,27 @@
   <body>
     <div id="hud">connecting…</div>
     <div id="hint">drag: select · right-click: move/attack · A then click: attack-move · Ctrl+1-9 set group, 1-9 recall · building + right-click: rally · WASD/edge: pan · wheel: zoom</div>
+    <button id="lobby-open" title="Start a new match">NEW MATCH</button>
+    <div id="lobby" hidden>
+      <div class="lobby-card">
+        <h2>New Match</h2>
+        <label>Players <select id="lobby-players"></select></label>
+        <label>Bots <select id="lobby-bots"></select></label>
+        <label>Difficulty
+          <select id="lobby-difficulty">
+            <option value="easy">Easy</option>
+            <option value="normal" selected>Normal</option>
+            <option value="hard">Hard</option>
+          </select>
+        </label>
+        <label>Map seed <input id="lobby-seed" type="number" value="1" min="1" step="1"></label>
+        <p class="note">Restarting replaces the match for everyone connected.</p>
+        <div class="lobby-actions">
+          <button id="lobby-cancel" class="ghost">Cancel</button>
+          <button id="lobby-start">Start</button>
+        </div>
+      </div>
+    </div>
     <canvas id="minimap" width="200" height="200"></canvas>
     <div id="panel">
       <div id="panel-title">BUILD</div>

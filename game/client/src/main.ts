@@ -18,6 +18,11 @@ const EDGE_MARGIN = 2;
 const hud = document.getElementById("hud")!;
 const panelItems = document.getElementById("panel-items")!;
 const minimap = document.getElementById("minimap") as HTMLCanvasElement;
+const lobby = document.getElementById("lobby")!;
+const lobbyPlayers = document.getElementById("lobby-players") as HTMLSelectElement;
+const lobbyBots = document.getElementById("lobby-bots") as HTMLSelectElement;
+const lobbyDifficulty = document.getElementById("lobby-difficulty") as HTMLSelectElement;
+const lobbySeed = document.getElementById("lobby-seed") as HTMLInputElement;
 const minimapCtx = minimap.getContext("2d")!;
 const panelTitle = document.getElementById("panel-title")!;
 const renderer = new Renderer();
@@ -90,6 +95,19 @@ net.onMessage = (msg: ServerMsg) => {
     playerId = msg.playerId;
     mapW = msg.map.width;
     mapH = msg.map.height;
+
+    // A welcome can arrive mid-session when someone restarts the match, so
+    // everything carried over from the previous game has to be dropped.
+    selected.clear();
+    controlGroups.clear();
+    selectedBuilding = null;
+    placing = null;
+    buildings = [];
+    supply = [];
+    currUnits = new Map();
+    prevUnits = new Map();
+    centred = false;
+    syncLobby(msg.config);
     renderer.buildTerrain(mapW, mapH, msg.map.tiles);
     explored = new Uint8Array(mapW * mapH);
     visible = new Uint8Array(mapW * mapH);
@@ -251,6 +269,55 @@ minimap.addEventListener("pointerdown", (e) => {
   e.preventDefault();
 });
 
+/**
+ * Populate the lobby from the running match.
+ *
+ * Bots are capped at players-1: offering a bot count the server will silently
+ * clamp is worse than not offering it, because the player cannot tell whether
+ * their choice took effect.
+ */
+function syncLobby(cfg: { players: number; bots: number; difficulty: string; seed: number }): void {
+  lobbyPlayers.replaceChildren();
+  for (let n = 2; n <= 6; n++) {
+    const o = document.createElement("option");
+    o.value = String(n);
+    o.textContent = `${n} players`;
+    if (n === cfg.players) o.selected = true;
+    lobbyPlayers.append(o);
+  }
+  refreshBotOptions(cfg.players, cfg.bots);
+  lobbyDifficulty.value = cfg.difficulty;
+  lobbySeed.value = String(cfg.seed);
+}
+
+function refreshBotOptions(players: number, selectedBots: number): void {
+  lobbyBots.replaceChildren();
+  for (let n = 0; n <= players - 1; n++) {
+    const o = document.createElement("option");
+    o.value = String(n);
+    o.textContent = n === 0 ? "none" : `${n} bot${n === 1 ? "" : "s"}`;
+    if (n === selectedBots) o.selected = true;
+    lobbyBots.append(o);
+  }
+}
+
+lobbyPlayers.addEventListener("change", () => {
+  refreshBotOptions(Number(lobbyPlayers.value), Number(lobbyBots.value));
+});
+
+document.getElementById("lobby-open")!.addEventListener("click", () => { lobby.hidden = false; });
+document.getElementById("lobby-cancel")!.addEventListener("click", () => { lobby.hidden = true; });
+document.getElementById("lobby-start")!.addEventListener("click", () => {
+  net.send({
+    t: "newMatch",
+    players: Number(lobbyPlayers.value),
+    bots: Number(lobbyBots.value),
+    difficulty: lobbyDifficulty.value as "easy" | "normal" | "hard",
+    seed: Math.max(1, Number(lobbySeed.value) || 1),
+  });
+  lobby.hidden = true;
+});
+
 function centreOnOwnUnits(): void {
   const mine = [...currUnits.values()].filter((u) => u.owner === playerId);
   if (mine.length === 0) return;
@@ -290,6 +357,10 @@ addEventListener("keydown", (e) => {
   // Hold-to-arm rather than a toggle: A then click is the RTS idiom, and a
   // sticky attack-move mode gets people killed by accident.
   if (e.code === "KeyA" && !e.repeat && selected.size > 0) attackMoveArmed = true;
+  if (e.code === "Escape" && !lobby.hidden) {
+    lobby.hidden = true;
+    return;
+  }
   if (e.code === "Escape") {
     attackMoveArmed = false;
     // Escape backs out of the most specific mode first, rather than clearing

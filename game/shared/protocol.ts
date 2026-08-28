@@ -14,6 +14,8 @@ export interface WelcomeMsg {
   tickRate: number;
   map: { width: number; height: number; tiles: number[] };
   players: PlayerState[];
+  /** The settings this match was started with, so the lobby can show them. */
+  config: { players: number; bots: number; difficulty: string; seed: number };
 }
 
 /** Server -> client, every tick. */
@@ -76,5 +78,14 @@ export interface RallyCmd {
   y: number;
 }
 
+/** Client -> server: throw away this match and start a new one. */
+export interface NewMatchCmd {
+  t: "newMatch";
+  players: number;
+  bots: number;
+  difficulty: "easy" | "normal" | "hard";
+  seed: number;
+}
+
 export type ServerMsg = WelcomeMsg | SnapshotMsg;
-export type ClientMsg = MoveCmd | BuildCmd | TrainCmd | OrderCmd | RallyCmd;
+export type ClientMsg = MoveCmd | BuildCmd | TrainCmd | OrderCmd | RallyCmd | NewMatchCmd;

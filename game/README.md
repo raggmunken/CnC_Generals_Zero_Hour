@@ -12,10 +12,15 @@ npm install
 npm run build                 # bundle the client
 npm run server                # serve it and run the match
 
-PLAYERS=4 npm run server      # pick the map by player count (2-6)
-PORT=8000 npm run server      # pick the port
-SEED=7 npm run server         # different map layout
+PLAYERS=4 npm run server      # starting map size (2-6); also settable in the lobby
+BOTS=2 npm run server         # how many slots the AI fills
+DIFFICULTY=hard npm run server
+PORT=8000 npm run server
+SEED=7 npm run server
 ```
+
+Everything except the port can also be changed in-game via **NEW MATCH**, which
+restarts the match for everyone connected.
 
 Open <http://localhost:8090>. **Open a second tab to join as another player** --
 there is no AI opponent yet, so a second tab is currently the only way to have

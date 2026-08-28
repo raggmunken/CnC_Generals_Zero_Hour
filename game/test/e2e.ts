@@ -171,6 +171,24 @@ const minimapPainted = await page.evaluate(() => {
 });
 check("minimap renders", minimapPainted);
 
+// 12. Lobby restarts the match with the chosen settings.
+await page.click("#lobby-open");
+await page.waitForTimeout(250);
+await page.selectOption("#lobby-players", "4");
+await page.waitForTimeout(150);
+const botChoices = await page.locator("#lobby-bots option").count();
+check("bot choices are capped at players-1", botChoices === 4, `${botChoices} options for 4 players`);
+
+await page.selectOption("#lobby-bots", "3");
+await page.fill("#lobby-seed", "77");
+await page.click("#lobby-start");
+await page.waitForTimeout(3000);
+
+const restarted = await page.evaluate(() => (window as any).__rts);
+check("match restarts from the lobby", (restarted?.units?.length ?? 0) > 0,
+      `units=${restarted?.units?.length}`);
+check("lobby closes after starting", await page.locator("#lobby").isHidden());
+
 check("no console errors", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" | "));
 
 await browser.close();
