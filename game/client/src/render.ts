@@ -5,7 +5,7 @@
  * selection overlay are touched per frame. Redrawing 4096 tiles every frame is
  * the obvious way to make a 2D RTS stutter for no reason.
  */
-import { Application, Container, Graphics } from "pixi.js";
+import { Application, Assets, Container, Graphics, Rectangle, Sprite, Texture } from "pixi.js";
 import { Terrain } from "../../shared/types.js";
 
 /** Screen pixels per world unit at zoom 1. */
@@ -32,6 +32,20 @@ export class Renderer {
   private unitLayer = new Graphics();
   private fxLayer = new Graphics();
   private fogLayer = new Graphics();
+
+  /** Sub-textures cut from the sheet, keyed as in atlas.json. */
+  private atlas = new Map<string, Texture>();
+  /**
+   * Live sprites keyed by entity id.
+   *
+   * Pooled rather than recreated: churning display objects every frame is the
+   * standard way to make a 2D renderer stutter, and entity ids give a stable
+   * key to reuse against.
+   */
+  private unitSprites = new Map<number, Sprite>();
+  private buildingSprites = new Map<number, Sprite>();
+  private unitContainer = new Container();
+  private buildingContainer = new Container();
   private overlay = new Graphics();
 
   camX = 0;
@@ -51,11 +65,41 @@ export class Renderer {
       this.terrainLayer,
       this.supplyLayer,
       this.buildingLayer,
+      this.buildingContainer,
       this.unitLayer,
+      this.unitContainer,
       this.fxLayer,
       this.fogLayer,
     );
     this.app.stage.addChild(this.world, this.overlay);
+  }
+
+  /**
+   * Load the sprite sheet, if there is one.
+   *
+   * Optional on purpose: the game stays playable with the primitive shapes if
+   * the art is missing or being redrawn, rather than failing to start.
+   */
+  async loadAtlas(): Promise<boolean> {
+    try {
+      const manifest = await (await fetch("/atlas.json")).json();
+      const sheet: Texture = await Assets.load(`/${manifest.sheet}`);
+      for (const [key, cell] of Object.entries(manifest.sprites as Record<string, {
+        x: number; y: number; w: number; h: number;
+      }>)) {
+        this.atlas.set(key, new Texture({
+          source: sheet.source,
+          frame: new Rectangle(cell.x, cell.y, cell.w, cell.h),
+        }));
+      }
+      return this.atlas.size > 0;
+    } catch {
+      return false;
+    }
+  }
+
+  get hasAtlas(): boolean {
+    return this.atlas.size > 0;
   }
 
   get tilePx(): number {
@@ -110,6 +154,8 @@ export class Renderer {
       owner: number;
       x: number;
       y: number;
+      id: number;
+      type: string;
       size: number;
       progress: number;
       selected: boolean;
@@ -118,16 +164,30 @@ export class Renderer {
   ): void {
     const g = this.buildingLayer;
     g.clear();
+    const live = new Set(buildings.map((b) => b.id));
+    this.reap(this.buildingSprites, live);
     for (const b of buildings) {
       const color = PLAYER_COLOR[b.owner % PLAYER_COLOR.length]!;
 
+      const tex = this.atlas.get(`building.${b.type}`);
+      const sp = tex
+        ? this.sprite(this.buildingSprites, this.buildingContainer, b.id, tex)
+        : null;
+
       if (b.progress < 1) {
+        if (sp) sp.visible = false;
         // Under construction: outline the footprint and fill from the bottom
         // up, so progress is readable without a separate progress bar.
         g.rect(b.x, b.y, b.size, b.size).fill({ color, alpha: 0.18 });
         const h = b.size * b.progress;
         g.rect(b.x, b.y + b.size - h, b.size, h).fill({ color, alpha: 0.55 });
         g.rect(b.x, b.y, b.size, b.size).stroke({ color, width: 0.08, alpha: 0.9 });
+      } else if (sp) {
+        sp.visible = true;
+        sp.position.set(b.x + b.size / 2, b.y + b.size / 2);
+        sp.tint = color;
+        sp.width = b.size;
+        sp.height = b.size;
       } else {
         g.rect(b.x + 0.1, b.y + 0.1, b.size - 0.2, b.size - 0.2).fill(0x2a2724);
         g.rect(b.x + 0.25, b.y + 0.25, b.size - 0.5, b.size - 0.5).fill(color);
@@ -150,23 +210,74 @@ export class Renderer {
     g.rect(ghost.x, ghost.y, ghost.size, ghost.size).stroke({ color, width: 0.1 });
   }
 
+  /** Reuse or create a pooled sprite for an entity. */
+  private sprite(
+    pool: Map<number, Sprite>,
+    parent: Container,
+    id: number,
+    texture: Texture,
+  ): Sprite {
+    let sp = pool.get(id);
+    if (!sp) {
+      sp = new Sprite(texture);
+      sp.anchor.set(0.5);
+      parent.addChild(sp);
+      pool.set(id, sp);
+    } else if (sp.texture !== texture) {
+      sp.texture = texture;
+    }
+    return sp;
+  }
+
+  /** Drop sprites for entities that no longer exist. */
+  private reap(pool: Map<number, Sprite>, live: Set<number>): void {
+    for (const [id, sp] of pool) {
+      if (live.has(id)) continue;
+      sp.destroy();
+      pool.delete(id);
+    }
+  }
+
   drawUnits(
     units: Array<{
-      id: number; owner: number; x: number; y: number; radius: number; hpFrac: number;
+      id: number; owner: number; type: string;
+      x: number; y: number; radius: number; hpFrac: number;
     }>,
     selected: ReadonlySet<number>,
   ): void {
     const g = this.unitLayer;
     g.clear();
+
+    const live = new Set<number>();
     for (const u of units) {
+      live.add(u.id);
       const color = PLAYER_COLOR[u.owner % PLAYER_COLOR.length]!;
+
       if (selected.has(u.id)) {
-        // Selection ring drawn under the body so it reads as a halo.
+        // Selection ring under the body so it reads as a halo.
         g.circle(u.x, u.y, u.radius * 1.45).fill(0xffffff);
       }
-      g.circle(u.x, u.y, u.radius).fill(color);
+
+      const tex = this.atlas.get(`unit.${u.type}`);
+      if (tex) {
+        const sp = this.sprite(this.unitSprites, this.unitContainer, u.id, tex);
+        sp.position.set(u.x, u.y);
+        // Sprites are drawn neutral grey, so tinting gives every faction from
+        // one sheet rather than one sheet per player colour.
+        sp.tint = color;
+        // Drawn larger than the collision radius on purpose: a sprite sized
+        // exactly to its footprint is unreadably small for infantry at normal
+        // zoom, and readability matters more than physical honesty here.
+        const draw = Math.max(0.95, u.radius * 3.2);
+        sp.width = draw;
+        sp.height = draw;
+      } else {
+        g.circle(u.x, u.y, u.radius).fill(color);
+      }
+
       this.healthBar(g, u.x, u.y - u.radius - 0.3, u.radius * 2.2, u.hpFrac);
     }
+    this.reap(this.unitSprites, live);
   }
 
   /**

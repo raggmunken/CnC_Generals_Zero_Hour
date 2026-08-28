@@ -21,7 +21,19 @@ export interface Palette {
   outline: string;
 }
 
-/** Faction tints. Only `body` changes; the greys stay shared so the set coheres. */
+/**
+ * Neutral palette for the game atlas.
+ *
+ * Sprites are drawn greyscale and tinted per player at runtime, so one atlas
+ * serves every faction. Baking colours in would mean re-exporting the whole
+ * sheet to add a player slot.
+ */
+export const NEUTRAL: Palette = {
+  body: "#b9b9b9", bodyLit: "#e2e2e2", bodyDark: "#7d7d7d",
+  metal: "#8a8a8a", metalDark: "#4c4c4c", glass: "#cfe9f5", outline: "#1c1a19",
+};
+
+/** Faction tints, used for the human-facing guide sheet only. */
 export const FACTIONS: Record<string, Palette> = {
   red: { body: "#c2483d", bodyLit: "#e0705f", bodyDark: "#8d2f28", metal: "#6f7378", metalDark: "#3f4347", glass: "#9fd4e8", outline: "#1c1a19" },
   blue: { body: "#3f77c0", bodyLit: "#6098db", bodyDark: "#2a5288", metal: "#6f7378", metalDark: "#3f4347", glass: "#9fd4e8", outline: "#1c1a19" },

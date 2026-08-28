@@ -56,6 +56,24 @@ check("box select picked up units", selCount > 0, `selected=${selCount}`);
 
 await page.screenshot({ path: "/tmp/rts-selected.png" });
 
+// Control groups, tested here rather than later: by the end of the run the
+// units have been ordered across the map and may no longer be on screen, which
+// makes a re-selection flaky for reasons unrelated to control groups.
+await page.keyboard.down("Control");
+await page.keyboard.press("Digit1");
+await page.keyboard.up("Control");
+await page.keyboard.press("Escape");
+await page.waitForTimeout(200);
+const cleared = /selected (\d+)/.exec((await page.locator("#hud").textContent()) ?? "")?.[1];
+await page.keyboard.press("Digit1");
+await page.waitForTimeout(250);
+const recalled = /selected (\d+)/.exec((await page.locator("#hud").textContent()) ?? "")?.[1];
+check(
+  "control group assigns and recalls",
+  cleared === "0" && Number(recalled) === selCount && selCount > 0,
+  `selected=${selCount} cleared=${cleared} recalled=${recalled}`,
+);
+
 // 4. The real test: order a move and confirm the server moved the units.
 //    Read positions straight off the wire with an independent socket so we are
 //    testing the server's state, not the client's optimism.
@@ -133,6 +151,25 @@ const armedHud = (await page.locator("#hud").textContent()) ?? "";
 check("attack-move arms with A", armedHud.includes("ATTACK-MOVE"), armedHud.trim());
 
 await page.screenshot({ path: "/tmp/rts-combat.png" });
+
+// 9. The sprite sheet loaded and is being used, not silently skipped.
+const usingAtlas = await page.evaluate(async () => {
+  const r = await fetch("/atlas.json");
+  if (!r.ok) return false;
+  const m = await r.json();
+  return Object.keys(m.sprites ?? {}).length > 0;
+});
+check("sprite atlas is served and populated", usingAtlas);
+
+// 10. Minimap exists and has been painted (not a blank canvas).
+const minimapPainted = await page.evaluate(() => {
+  const c = document.getElementById("minimap") as HTMLCanvasElement | null;
+  if (!c) return false;
+  const d = c.getContext("2d")!.getImageData(0, 0, c.width, c.height).data;
+  for (let i = 3; i < d.length; i += 4) if (d[i] !== 0) return true;
+  return false;
+});
+check("minimap renders", minimapPainted);
 
 check("no console errors", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" | "));
 

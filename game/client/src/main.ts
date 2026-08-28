@@ -17,9 +17,13 @@ const EDGE_MARGIN = 2;
 
 const hud = document.getElementById("hud")!;
 const panelItems = document.getElementById("panel-items")!;
+const minimap = document.getElementById("minimap") as HTMLCanvasElement;
+const minimapCtx = minimap.getContext("2d")!;
 const panelTitle = document.getElementById("panel-title")!;
 const renderer = new Renderer();
 await renderer.init();
+// Optional: the game plays with primitive shapes if the sheet is absent.
+await renderer.loadAtlas();
 
 const net = new Net();
 
@@ -71,6 +75,10 @@ let selectedBuilding: number | null = null;
 
 const selected = new Set<number>();
 const keys = new Set<string>();
+/** Ctrl+1..9 stores a selection, 1..9 recalls it. */
+const controlGroups = new Map<string, number[]>();
+/** Terrain drawn once into an offscreen canvas; only fog and units redraw. */
+let minimapTerrain: HTMLCanvasElement | null = null;
 let pointer = { x: 0, y: 0, inside: false };
 let centred = false;
 let dragStart: { x: number; y: number } | null = null;
@@ -85,6 +93,7 @@ net.onMessage = (msg: ServerMsg) => {
     renderer.buildTerrain(mapW, mapH, msg.map.tiles);
     explored = new Uint8Array(mapW * mapH);
     visible = new Uint8Array(mapW * mapH);
+    buildMinimapTerrain(msg.map.tiles);
     // Camera is centred once our units actually arrive -- see below. Welcome
     // lands before the first snapshot, so there is nothing to centre on yet.
   } else if (msg.t === "snap") {
@@ -114,6 +123,7 @@ net.onMessage = (msg: ServerMsg) => {
     }
     economy = msg.economy;
     if (!centred) centreOnOwnUnits();
+    drawMinimap();
     if (selectedBuilding !== null && !buildings.some((b) => b.id === selectedBuilding)) {
       selectedBuilding = null;
     }
@@ -164,6 +174,83 @@ function updateFog(sources: Array<{ x: number; y: number; vision: number }>): vo
   fogDirty = true;
 }
 
+/** Paint the static terrain layer of the minimap once. */
+function buildMinimapTerrain(tiles: number[]): void {
+  const c = document.createElement("canvas");
+  c.width = mapW;
+  c.height = mapH;
+  const ctx = c.getContext("2d")!;
+  const img = ctx.createImageData(mapW, mapH);
+  const palette: Record<number, [number, number, number]> = {
+    0: [63, 81, 51], 1: [89, 80, 47], 2: [36, 80, 107], 3: [74, 70, 66], 4: [43, 61, 34],
+  };
+  for (let i = 0; i < mapW * mapH; i++) {
+    const [r, g, b] = palette[tiles[i] ?? 0] ?? [0, 0, 0];
+    img.data[i * 4] = r;
+    img.data[i * 4 + 1] = g;
+    img.data[i * 4 + 2] = b;
+    img.data[i * 4 + 3] = 255;
+  }
+  ctx.putImageData(img, 0, 0);
+  minimapTerrain = c;
+}
+
+/**
+ * Redraw the minimap.
+ *
+ * Called on snapshots rather than every frame: it is a whole-map redraw and
+ * nothing on it changes faster than the simulation does.
+ */
+function drawMinimap(): void {
+  if (!minimapTerrain || mapW === 0) return;
+  const W = minimap.width;
+  const H = minimap.height;
+  minimapCtx.clearRect(0, 0, W, H);
+
+  minimapCtx.imageSmoothingEnabled = false;
+  minimapCtx.drawImage(minimapTerrain, 0, 0, W, H);
+
+  // Fog, at tile resolution.
+  const sx = W / mapW;
+  const sy = H / mapH;
+  for (let y = 0; y < mapH; y++) {
+    for (let x = 0; x < mapW; x++) {
+      const i = y * mapW + x;
+      if (visible[i]) continue;
+      minimapCtx.fillStyle = explored[i] ? "rgba(5,7,10,0.45)" : "rgb(5,7,10)";
+      minimapCtx.fillRect(x * sx, y * sy, Math.ceil(sx), Math.ceil(sy));
+    }
+  }
+
+  for (const b of buildings) {
+    const size = buildingDef(b.type).size;
+    minimapCtx.fillStyle = b.owner === playerId ? "#7ad07a" : "#d2564b";
+    minimapCtx.fillRect(b.x * sx, b.y * sy, Math.max(2, size * sx), Math.max(2, size * sy));
+  }
+  for (const u of currUnits.values()) {
+    minimapCtx.fillStyle = u.owner === playerId ? "#bff0bf" : "#ff8a7a";
+    minimapCtx.fillRect(u.x * sx - 1, u.y * sy - 1, 2.5, 2.5);
+  }
+
+  // Viewport rectangle, so the minimap says where you are looking.
+  const viewW = (window.innerWidth / renderer.tilePx) * sx;
+  const viewH = (window.innerHeight / renderer.tilePx) * sy;
+  minimapCtx.strokeStyle = "rgba(255,255,255,0.75)";
+  minimapCtx.lineWidth = 1;
+  minimapCtx.strokeRect(renderer.camX * sx, renderer.camY * sy, viewW, viewH);
+}
+
+minimap.addEventListener("pointerdown", (e) => {
+  const r = minimap.getBoundingClientRect();
+  const wx = ((e.clientX - r.left) / r.width) * mapW;
+  const wy = ((e.clientY - r.top) / r.height) * mapH;
+  // Centre the view on the clicked point rather than putting it top-left.
+  renderer.camX = wx - window.innerWidth / renderer.tilePx / 2;
+  renderer.camY = wy - window.innerHeight / renderer.tilePx / 2;
+  clampCamera();
+  e.preventDefault();
+});
+
 function centreOnOwnUnits(): void {
   const mine = [...currUnits.values()].filter((u) => u.owner === playerId);
   if (mine.length === 0) return;
@@ -179,6 +266,27 @@ function centreOnOwnUnits(): void {
 
 addEventListener("keydown", (e) => {
   keys.add(e.code);
+
+  // Control groups. Ctrl+N assigns the current selection, N recalls it --
+  // the muscle memory every RTS player already has.
+  const digit = /^Digit([1-9])$/.exec(e.code);
+  if (digit) {
+    const slot = digit[1]!;
+    if (e.ctrlKey || e.metaKey) {
+      if (selected.size > 0) controlGroups.set(slot, [...selected]);
+      e.preventDefault();
+    } else {
+      const group = controlGroups.get(slot);
+      if (group) {
+        selected.clear();
+        // Skip anything that has since died, rather than selecting ghosts.
+        for (const id of group) if (currUnits.has(id)) selected.add(id);
+        selectedBuilding = null;
+        renderPanel();
+      }
+    }
+    return;
+  }
   // Hold-to-arm rather than a toggle: A then click is the RTS idiom, and a
   // sticky attack-move mode gets people killed by accident.
   if (e.code === "KeyA" && !e.repeat && selected.size > 0) attackMoveArmed = true;
@@ -520,6 +628,7 @@ renderer.app.ticker.add(() => {
       x: p ? p.x + (u.x - p.x) * alpha : u.x,
       y: p ? p.y + (u.y - p.y) * alpha : u.y,
       radius: def.radius,
+      type: u.type,
       hpFrac: u.hp / def.maxHp,
     });
   }
@@ -529,6 +638,8 @@ renderer.app.ticker.add(() => {
 
   renderer.drawBuildings(
     buildings.map((b) => ({
+      id: b.id,
+      type: b.type,
       owner: b.owner,
       x: b.x,
       y: b.y,

@@ -23,6 +23,14 @@
         pointer-events: none;
         white-space: pre;
       }
+      #minimap {
+        position: fixed; bottom: 0; left: 0;
+        width: 200px; height: 200px;
+        background: rgba(10, 14, 8, 0.86);
+        border-top-right-radius: 6px;
+        cursor: crosshair;
+        display: block;
+      }
       #panel {
         position: fixed; top: 0; right: 0; width: 210px; max-height: 100vh;
         overflow-y: auto;
@@ -44,7 +52,9 @@
       .item .why { display: block; font-size: 11px; opacity: 0.6; margin-top: 2px; }
       .item.active { border-color: #9fe870; background: #33421f; }
       #hint {
-        position: fixed; bottom: 0; left: 0; padding: 8px 12px;
+        /* Offset past the minimap: the two overlapped and the hints were
+           unreadable behind it. */
+        position: fixed; bottom: 0; left: 200px; padding: 8px 12px;
         background: rgba(10, 14, 8, 0.72);
         border-top-right-radius: 6px;
         pointer-events: none;
@@ -54,7 +64,8 @@
   </head>
   <body>
     <div id="hud">connecting…</div>
-    <div id="hint">drag: select · right-click: move/attack · A then click: attack-move · building + right-click: rally · WASD/edge: pan · wheel: zoom</div>
+    <div id="hint">drag: select · right-click: move/attack · A then click: attack-move · Ctrl+1-9 set group, 1-9 recall · building + right-click: rally · WASD/edge: pan · wheel: zoom</div>
+    <canvas id="minimap" width="200" height="200"></canvas>
     <div id="panel">
       <div id="panel-title">BUILD</div>
       <div id="panel-items"></div>

@@ -13,7 +13,7 @@
 import { chromium } from "playwright";
 import { writeFileSync } from "node:fs";
 import { BUILDINGS, UNITS } from "../shared/content.js";
-import { FACTIONS, SPRITES } from "./sprites.js";
+import { FACTIONS, NEUTRAL, SPRITES } from "./sprites.js";
 
 const CELL = 128;
 const PAD = 10;
@@ -155,23 +155,70 @@ ${placed.map((c) => `
 
 writeFileSync("/tmp/atlas.html", html);
 
+// -- the sheet the game actually loads -------------------------------------
+//
+// Separate from the guide above: the game needs a clean grid with transparent
+// background and no labels or borders, drawn neutral so it can be tinted per
+// player. The guide is for a human deciding what to draw; this is the contract
+// with the renderer.
+
+const SHEET_COLS = 8;
+const sheetCells = cells.map((c, i) => ({
+  ...c,
+  // Redraw the art neutral, so runtime tinting produces every faction.
+  svg: c.group === "Terrain" || c.group === "Overlays" ? c.svg : neutralArt(c.key),
+  sx: (i % SHEET_COLS) * CELL,
+  sy: Math.floor(i / SHEET_COLS) * CELL,
+}));
+const SHEET_W = SHEET_COLS * CELL;
+const SHEET_H = Math.ceil(sheetCells.length / SHEET_COLS) * CELL;
+
+function neutralArt(key: string): string {
+  const [kind, id] = key.split(".");
+  if (kind === "building") return SPRITES.building(NEUTRAL);
+  if (id === "infantry" || id === "rocket") return SPRITES.infantry(NEUTRAL);
+  if (id === "harvester" || id === "dozer") return SPRITES.harvester(NEUTRAL);
+  return SPRITES.tank(NEUTRAL);
+}
+
+const sheetHtml = `<!doctype html><meta charset="utf-8"><body>
+<style>
+  html,body { margin:0; background:transparent; }
+  body { width:${SHEET_W}px; height:${SHEET_H}px; position:relative; }
+  img { position:absolute; width:${CELL}px; height:${CELL}px; }
+</style>
+${sheetCells.map((c) => `<img style="left:${c.sx}px; top:${c.sy}px" src="data:image/svg+xml;base64,${Buffer.from(c.svg).toString("base64")}">`).join("")}
+</body>`;
+writeFileSync("/tmp/sheet.html", sheetHtml);
+
 const manifest = {
   cell: CELL,
-  note: "Each cell is a square canvas. `tiles` is the element's real footprint in world tiles; the renderer scales the cell to that.",
+  sheet: "sprites.png",
+  note: "Sprites are drawn neutral grey and tinted per player at runtime. `tiles` is the element's footprint in world tiles; the renderer scales the cell to that. Redraw cells in sprites.png at the same grid, or redraw the guide and re-export.",
   sprites: Object.fromEntries(
-    placed.map((c) => [c.key, { x: c.x, y: c.y, w: CELL, h: CELL, tiles: c.tiles, label: c.label }]),
+    sheetCells.map((c) => [c.key, { x: c.sx, y: c.sy, w: CELL, h: CELL, tiles: c.tiles, label: c.label }]),
   ),
 };
-writeFileSync("assets/atlas.json", JSON.stringify(manifest, null, 2));
+writeFileSync("client/public/atlas.json", JSON.stringify(manifest, null, 2));
 
 const browser = await chromium.launch({
   executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
   args: ["--no-sandbox"],
 });
-const page = await browser.newPage({ viewport: { width: WIDTH, height: HEIGHT }, deviceScaleFactor: 2 });
-await page.goto("file:///tmp/atlas.html");
-await page.waitForTimeout(400);
-await page.screenshot({ path: "assets/atlas.png", fullPage: true });
+
+const guide = await browser.newPage({ viewport: { width: WIDTH, height: HEIGHT }, deviceScaleFactor: 2 });
+await guide.goto("file:///tmp/atlas.html");
+await guide.waitForTimeout(400);
+await guide.screenshot({ path: "assets/atlas-guide.png", fullPage: true });
+
+const sheet = await browser.newPage({ viewport: { width: SHEET_W, height: SHEET_H } });
+await sheet.goto("file:///tmp/sheet.html");
+await sheet.waitForTimeout(400);
+await sheet.screenshot({ path: "client/public/sprites.png", omitBackground: true });
+
 await browser.close();
 
-console.log(`atlas: ${placed.length} cells, ${WIDTH}x${HEIGHT} (@2x) -> assets/atlas.png + assets/atlas.json`);
+console.log(
+  `guide: ${placed.length} cells -> assets/atlas-guide.png\n` +
+  `sheet: ${sheetCells.length} cells, ${SHEET_W}x${SHEET_H} -> client/public/sprites.png + atlas.json`,
+);

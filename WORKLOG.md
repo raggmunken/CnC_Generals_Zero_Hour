@@ -222,3 +222,33 @@ Claude: Gameplay audit now at **37 working, 0 broken, 6 not implemented**.
 Remaining gaps: aircraft (armour class, flak and AA battery all exist, nothing
 flies yet), lobby UI, save/replays, sound, veterancy/stealth, and the atlas is
 not yet wired into the renderer.
+
+Claude: Wired the sprite atlas into the renderer. Split the one sheet into two
+outputs, because they serve different readers: `client/public/sprites.png` is
+what the game loads (clean grid, transparent, no labels, drawn neutral grey so
+one sheet tints to every player colour) and `assets/atlas-guide.png` is the
+labelled reference a human uses to decide what to draw. The renderer falls back
+to primitive shapes if the sheet is absent, so the game stays playable while
+art is being replaced.
+
+Claude: Sprites are pooled by entity id rather than recreated per frame --
+churning display objects every frame is the standard way to make a 2D renderer
+stutter. Units are drawn deliberately larger than their collision radius:
+sizing a sprite exactly to its footprint makes infantry unreadable at normal
+zoom, and readability beats physical honesty here.
+
+Claude: Added a minimap (terrain painted once offscreen, fog and units redrawn
+on snapshots rather than per frame, click to jump, viewport rectangle) and
+control groups (Ctrl+1-9 assign, 1-9 recall, skipping units that have since
+died rather than selecting ghosts).
+
+Claude: ISSUE FOUND AND FIXED — the hint bar sat behind the minimap and was
+unreadable. Offset it past the minimap width.
+
+Claude: The control-group end-to-end test was flaky where I first put it: by
+the end of the run the units have been ordered across the map and may be off
+screen, so re-selecting them fails for reasons unrelated to control groups.
+Moved it to immediately after the first known-good selection.
+
+Claude: Audit now 37 working, 0 broken, 5 not implemented. Remaining: aircraft
+(deferred by the user), lobby UI, save/replays, sound, veterancy/stealth.

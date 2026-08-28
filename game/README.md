@@ -133,6 +133,20 @@ sent it.
 Piles deplete, and their drawn radius tracks what is left, so the map reads its
 own economy without a UI overlay.
 
+## Art
+
+`client/public/sprites.png` is the sheet the game loads, with
+`client/public/atlas.json` mapping keys to cells. Sprites are drawn neutral grey
+and tinted per player at runtime, so one sheet serves every faction.
+
+`assets/atlas-guide.png` is the human-facing reference: the same cells labelled
+with name, footprint and cost. Redraw cells in `sprites.png` on the same grid
+and the game picks them up -- no code change. Regenerate both with
+`npx tsx tools/atlas.ts`.
+
+The renderer falls back to primitive shapes if the sheet is missing, so the
+game stays playable while the art is being replaced.
+
 ## Status
 
 Phases A and B complete and verified: simulation, transport, rendering,
