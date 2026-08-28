@@ -209,16 +209,21 @@ const browser = await chromium.launch({
 const guide = await browser.newPage({ viewport: { width: WIDTH, height: HEIGHT }, deviceScaleFactor: 2 });
 await guide.goto("file:///tmp/atlas.html");
 await guide.waitForTimeout(400);
-await guide.screenshot({ path: "assets/atlas-guide.png", fullPage: true });
+await guide.screenshot({ path: "assets/placeholder-guide.png", fullPage: true });
 
 const sheet = await browser.newPage({ viewport: { width: SHEET_W, height: SHEET_H } });
 await sheet.goto("file:///tmp/sheet.html");
 await sheet.waitForTimeout(400);
-await sheet.screenshot({ path: "client/public/sprites.png", omitBackground: true });
+// Deliberately NOT client/public/sprites.png: that slot holds the real art
+// now, and a stray `npm run atlas` must not be able to overwrite it. Copy this
+// over by hand if you want the primitive placeholders back.
+await sheet.screenshot({ path: "assets/placeholder-sheet.png", omitBackground: true });
 
 await browser.close();
 
 console.log(
-  `guide: ${placed.length} cells -> assets/atlas-guide.png\n` +
-  `sheet: ${sheetCells.length} cells, ${SHEET_W}x${SHEET_H} -> client/public/sprites.png + atlas.json`,
+  `guide:  ${placed.length} cells -> assets/placeholder-guide.png\n` +
+  `sheet:  ${sheetCells.length} cells, ${SHEET_W}x${SHEET_H} -> assets/placeholder-sheet.png\n` +
+  `atlas:  client/public/atlas.json (the contract the renderer reads)\n` +
+  `The live sheet is client/public/sprites.png; run tools/guide.ts to label it.`,
 );

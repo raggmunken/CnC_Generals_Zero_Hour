@@ -11,6 +11,15 @@ import { Terrain } from "../../shared/types.js";
 /** Screen pixels per world unit at zoom 1. */
 export const BASE_TILE_PX = 24;
 
+/** Terrain enum -> atlas key. */
+const TERRAIN_SPRITE: Record<number, string> = {
+  [Terrain.Ground]: "terrain.ground",
+  [Terrain.Rough]: "terrain.rough",
+  [Terrain.Water]: "terrain.water",
+  [Terrain.Mountain]: "terrain.mountain",
+  [Terrain.Trees]: "terrain.trees",
+};
+
 const TERRAIN_COLOR: Record<number, number> = {
   [Terrain.Ground]: 0x3f5133,
   [Terrain.Rough]: 0x59502f,
@@ -20,13 +29,17 @@ const TERRAIN_COLOR: Record<number, number> = {
 };
 
 /** Player colours: red team, blue team, then spares. */
-export const PLAYER_COLOR = [0xd2564b, 0x4b8cd2, 0x54b06a, 0xd0b24a];
+// Multiplied over the neutral art, so these have to stay light: a saturated
+// mid-tone here crushes every panel line on a vehicle into one flat mass.
+export const PLAYER_COLOR = [0xe08279, 0x84b4e6, 0x86cf9a, 0xe3cd83];
 
 export class Renderer {
   readonly app = new Application();
   readonly world = new Container();
 
   private terrainLayer = new Graphics();
+  /** Terrain baked into one texture; see buildTerrain. */
+  private terrainSprite = new Sprite();
   private supplyLayer = new Graphics();
   private buildingLayer = new Graphics();
   private unitLayer = new Graphics();
@@ -46,6 +59,13 @@ export class Renderer {
   private buildingSprites = new Map<number, Sprite>();
   private unitContainer = new Container();
   private buildingContainer = new Container();
+  private supplySprites = new Map<number, Sprite>();
+  private supplyContainer = new Container();
+  /** The sheet as a bitmap, for compositing terrain outside of Pixi. */
+  private sheet: ImageBitmap | null = null;
+  private cells: Record<string, { x: number; y: number; w: number; h: number }> = {};
+  /** Last seen position and facing per unit, so sprites turn as they drive. */
+  private facing = new Map<number, { x: number; y: number; a: number }>();
   private overlay = new Graphics();
 
   camX = 0;
@@ -63,7 +83,9 @@ export class Renderer {
     // Buildings sit under units so infantry standing on a base stay visible.
     this.world.addChild(
       this.terrainLayer,
+      this.terrainSprite,
       this.supplyLayer,
+      this.supplyContainer,
       this.buildingLayer,
       this.buildingContainer,
       this.unitLayer,
@@ -84,6 +106,14 @@ export class Renderer {
     try {
       const manifest = await (await fetch("/atlas.json")).json();
       const sheet: Texture = await Assets.load(`/${manifest.sheet}`);
+      this.cells = manifest.sprites;
+      // A second, plain copy of the sheet: terrain is composited on a 2D canvas
+      // rather than as thousands of sprites, and that needs a drawable image.
+      try {
+        this.sheet = await createImageBitmap(await (await fetch(`/${manifest.sheet}`)).blob());
+      } catch {
+        this.sheet = null;
+      }
       for (const [key, cell] of Object.entries(manifest.sprites as Record<string, {
         x: number; y: number; w: number; h: number;
       }>)) {
@@ -106,7 +136,16 @@ export class Renderer {
     return BASE_TILE_PX * this.zoom;
   }
 
-  /** Draw the map once. Called on welcome, and on any map change. */
+  /**
+   * Draw the map once. Called on welcome, and on any map change.
+   *
+   * The flat-colour pass always runs: it is the fallback when there is no
+   * sheet, and it under-paints the tiles so a texture that fails to decode
+   * still leaves a legible map. With a sheet, every tile is composited into one
+   * texture on an offscreen canvas -- a sprite per tile would be tens of
+   * thousands of display objects on a large map, for an image that never
+   * changes after the match starts.
+   */
   buildTerrain(width: number, height: number, tiles: number[]): void {
     const g = this.terrainLayer;
     g.clear();
@@ -116,6 +155,29 @@ export class Renderer {
         g.rect(x, y, 1, 1).fill(TERRAIN_COLOR[t] ?? 0x000000);
       }
     }
+
+    const old = this.terrainSprite.texture;
+    this.terrainSprite.visible = false;
+    if (!this.sheet) return;
+
+    const TP = 24;                       // texture pixels per tile
+    const canvas = document.createElement("canvas");
+    canvas.width = width * TP;
+    canvas.height = height * TP;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    ctx.imageSmoothingEnabled = true;
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const cell = this.cells[TERRAIN_SPRITE[tiles[y * width + x] ?? Terrain.Ground] ?? ""];
+        if (!cell) continue;
+        ctx.drawImage(this.sheet, cell.x, cell.y, cell.w, cell.h, x * TP, y * TP, TP, TP);
+      }
+    }
+    this.terrainSprite.texture = Texture.from(canvas);
+    this.terrainSprite.scale.set(1 / TP);
+    this.terrainSprite.visible = true;
+    if (old && old !== Texture.EMPTY) old.destroy(true);
   }
 
   /** World coordinates -> screen pixels. */
@@ -138,15 +200,27 @@ export class Renderer {
    * Supply piles. Radius tracks how much is left, so a worked-out pile visibly
    * shrinks and the map reads its own economy without a UI overlay.
    */
-  drawSupply(nodes: Array<{ x: number; y: number; amount: number; max: number }>): void {
+  drawSupply(nodes: Array<{ id: number; x: number; y: number; amount: number; max: number }>): void {
     const g = this.supplyLayer;
     g.clear();
+    const tex = this.atlas.get("overlay.supply");
+    const live = new Set<number>();
     for (const n of nodes) {
       if (n.amount <= 0) continue;
       const frac = Math.max(0.18, Math.min(1, n.amount / n.max));
-      g.circle(n.x, n.y, 1.5 * frac + 0.4).fill(0xc9a227);
-      g.circle(n.x, n.y, 1.5 * frac + 0.4).stroke({ color: 0x7d6416, width: 0.08 });
+      const r = 1.5 * frac + 0.4;
+      if (tex) {
+        live.add(n.id);
+        const sp = this.sprite(this.supplySprites, this.supplyContainer, n.id, tex);
+        sp.position.set(n.x, n.y);
+        sp.rotation = 0;
+        sp.scale.set((r * 2.3) / tex.frame.width);
+      } else {
+        g.circle(n.x, n.y, r).fill(0xc9a227);
+        g.circle(n.x, n.y, r).stroke({ color: 0x7d6416, width: 0.08 });
+      }
     }
+    this.reap(this.supplySprites, live);
   }
 
   drawBuildings(
@@ -269,8 +343,8 @@ export class Renderer {
         // exactly to its footprint is unreadably small for infantry at normal
         // zoom, and readability matters more than physical honesty here.
         const draw = Math.max(0.95, u.radius * 3.2);
-        sp.width = draw;
-        sp.height = draw;
+        sp.scale.set(draw / tex.frame.width);
+        sp.rotation = this.headingOf(u.id, u.x, u.y);
       } else {
         g.circle(u.x, u.y, u.radius).fill(color);
       }
@@ -278,6 +352,31 @@ export class Renderer {
       this.healthBar(g, u.x, u.y - u.radius - 0.3, u.radius * 2.2, u.hpFrac);
     }
     this.reap(this.unitSprites, live);
+    for (const id of [...this.facing.keys()]) if (!live.has(id)) this.facing.delete(id);
+  }
+
+  /**
+   * Which way a unit is pointing, from where it has been.
+   *
+   * The server sends no heading, and it does not need to: the art all faces
+   * down, so the client can turn each sprite along its own motion. The
+   * threshold keeps a stationary unit from spinning on interpolation jitter,
+   * and the angle is kept when it stops so units do not snap back north.
+   */
+  private headingOf(id: number, x: number, y: number): number {
+    const prev = this.facing.get(id);
+    if (!prev) {
+      this.facing.set(id, { x, y, a: 0 });
+      return 0;
+    }
+    const dx = x - prev.x;
+    const dy = y - prev.y;
+    if (dx * dx + dy * dy > 4e-4) {
+      prev.a = Math.atan2(dy, dx) - Math.PI / 2;
+      prev.x = x;
+      prev.y = y;
+    }
+    return prev.a;
   }
 
   /**

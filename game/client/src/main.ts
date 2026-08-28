@@ -704,7 +704,9 @@ renderer.app.ticker.add(() => {
     });
   }
   renderer.drawSupply(
-    supply.map((n) => ({ x: n.x, y: n.y, amount: n.amount, max: supplyMax.get(n.id) ?? n.amount })),
+    supply.map((n) => ({
+      id: n.id, x: n.x, y: n.y, amount: n.amount, max: supplyMax.get(n.id) ?? n.amount,
+    })),
   );
 
   renderer.drawBuildings(

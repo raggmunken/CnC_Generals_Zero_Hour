@@ -274,3 +274,63 @@ placement mode, fog, remembered buildings.
 
 Claude: Audit now 37 working, 0 broken, 4 not implemented. Remaining: aircraft
 (deferred by the user), save/replays, sound, veterancy/stealth.
+
+Claude: You sent back generated art for the whole sheet — good art, but with
+the transparency checkerboard *painted into the image* rather than written as
+an alpha channel. That is the normal failure mode: image models draw the
+pattern they have seen in reference screenshots. Wrote `tools/import-sheet.py`
+to key it out rather than asking for a regeneration, because the regeneration
+would come back the same way.
+
+Claude: MEASURED — the keying is harder than "delete the two checker greys".
+Findings, so nobody redoes this search:
+  - The checkerboard is NOT on a global parity grid. I fitted period and offset
+    against pixels I was certain were background; best agreement was 0.39,
+    i.e. no better than chance. The sheet was upscaled non-uniformly. Any
+    approach that computes an expected tone from (x, y) is dead.
+  - Matching the two exact tones (185 and 127) is not enough either. The upscale
+    left soft 2px transitions on every checker boundary, and those intermediate
+    greys are ~14% of the background.
+  - Flooding through all mid-greys instead fixes that, but then the flood runs
+    down the cannon turret's barrel — same grey as a checker square — and eats
+    it. Gating the flood on "the neighbourhood is mostly checker tone" fixes the
+    barrel and breaks connectivity elsewhere.
+  - What worked: flood through mid-grey, but only where the neighbourhood is
+    mostly checker tone OR the pixel is perfectly neutral. The drawn art is
+    olive-tinted (blue channel below the others); the generator's background is
+    exactly neutral. That one channel difference separates them.
+
+Claude: ISSUE FOUND AND FIXED — `tools/atlas.ts` wrote its primitive
+placeholder art straight to `client/public/sprites.png`. With real art in that
+slot, one stray `npm run atlas` would have destroyed it with no warning. It now
+writes to `assets/placeholder-sheet.png`.
+
+Claude: The importer also normalises scale and centring per cell, forces
+neutral greyscale, lifts brightness, and makes the terrain tiles wrap. The
+brightness lift is not cosmetic: the renderer multiplies sprites by the player
+colour, and the generated art sits around 40% grey, which times a mid red is
+nearly black. Lightened `PLAYER_COLOR` for the same reason — a saturated
+mid-tone tint crushes every panel line on a vehicle into one flat mass.
+
+Claude: ISSUE FOUND AND FIXED — the renderer had never used the terrain cells
+of the atlas at all. It filled flat colour rectangles, so five painted terrain
+textures sat in the sheet doing nothing. Terrain is now composited once into a
+single texture on an offscreen canvas: a sprite per tile would be ~12,500
+display objects on a 112x112 map, for an image that never changes after the
+match starts. Supply piles use the ore sprite for the same reason.
+
+Claude: Units now turn to face where they are going. The server sends no
+heading and does not need to — the art all faces down, so the client derives
+the angle from the unit's own motion between frames, with a threshold so a
+stationary unit does not spin on interpolation jitter.
+
+Claude: Added `tools/guide.ts`. The old guide was drawn by the placeholder
+generator, so it described the placeholders forever. This one reads whichever
+sheet is actually installed, which is the only way the brief in
+`assets/ART_PROMPT.md` stays true as the art is replaced.
+
+Claude: ISSUE FOUND, NOT YET FIXED — `test/e2e.ts` is flaky. Three consecutive
+runs failed on different assertions (building placement, then attack-move, then
+two others) with no code change between them. The art work did not cause this;
+a PNG cannot. But a gate that fails differently each run is not a gate, and it
+needs a look before it is trusted again.
