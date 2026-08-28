@@ -109,12 +109,23 @@ check("tech tree gates War Factory behind Barracks", warFactoryDisabled);
 //    the browser player's balance. Building counts are global and so are fine.
 const creditsBefore = await readCredits();
 const stateBefore = await readState();
-await page.locator("#panel-items .item", { hasText: "Power Plant" }).first().click();
-await page.waitForTimeout(200);
-// Drop it on open ground away from the starting base.
-await page.mouse.click(700, 300);
-await page.waitForTimeout(1200);
-const stateAfter = await readState();
+// Try a few spots rather than one. Where the camera sits depends on which
+// start position this player drew, so a fixed pixel can land in water, on a
+// supply pile or off the map -- and then the test fails for reasons that have
+// nothing to do with whether placement works. It asserts that a building CAN
+// be placed, so it is allowed to look for somewhere to put one.
+const spots: Array<[number, number]> = [
+  [700, 300], [520, 420], [820, 460], [420, 240], [640, 560], [900, 220],
+];
+let stateAfter = stateBefore;
+for (const [x, y] of spots) {
+  await page.locator("#panel-items .item", { hasText: "Power Plant" }).first().click();
+  await page.waitForTimeout(200);
+  await page.mouse.click(x, y);
+  await page.waitForTimeout(1000);
+  stateAfter = await readState();
+  if (stateAfter.buildings > stateBefore.buildings) break;
+}
 const creditsAfter = await readCredits();
 
 check(
@@ -139,12 +150,45 @@ void cc;
 await page.mouse.click(20, 40); // clear any selection first
 await page.waitForTimeout(200);
 
-// 8. Attack-move arms from the keyboard with units selected.
-await page.mouse.move(20, 40);
-await page.mouse.down();
-await page.mouse.move(1260, 700, { steps: 10 });
-await page.mouse.up();
+// 8. Ctrl+A takes the whole army wherever it is, which also gives the
+//    attack-move check below a selection that does not depend on the camera.
+await page.keyboard.press("Control+KeyA");
 await page.waitForTimeout(300);
+const ARMED = ["infantry", "rocket", "tank", "aa_vehicle", "artillery"];
+const armyState = await page.evaluate((armed: string[]) => {
+  const w = window as unknown as {
+    __rts?: {
+      playerId: number;
+      units: Array<{ owner: number; type: string }>;
+    };
+    __rtsView?: { selected?: number; rangeRings?: number };
+  };
+  const mine = (w.__rts?.units ?? []).filter((u) => u.owner === w.__rts!.playerId);
+  return {
+    own: mine.length,
+    armed: mine.filter((u) => armed.includes(u.type)).length,
+    selected: w.__rtsView?.selected ?? 0,
+  };
+}, ARMED);
+check(
+  "Ctrl+A selects every unit we own",
+  armyState.own > 0 && armyState.selected === armyState.own,
+  `own=${armyState.own} selected=${armyState.selected}`,
+);
+
+// 9. A selection draws its weapon range, so the player can see reach. One ring
+//    per armed unit selected; a dozer or harvester has no weapon and no ring.
+const rings = await page.evaluate(() => {
+  const w = window as unknown as { __rtsView?: { rangeRings?: number } };
+  return w.__rtsView?.rangeRings ?? 0;
+});
+check(
+  "selected units show their weapon range",
+  rings === armyState.armed,
+  `rings=${rings} armed=${armyState.armed}`,
+);
+
+// 10. Attack-move arms from the keyboard with units selected.
 await page.keyboard.press("KeyA");
 await page.waitForTimeout(300);
 const armedHud = (await page.locator("#hud").textContent()) ?? "";

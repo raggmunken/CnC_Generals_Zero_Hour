@@ -356,6 +356,27 @@ addEventListener("keydown", (e) => {
   }
   // Hold-to-arm rather than a toggle: A then click is the RTS idiom, and a
   // sticky attack-move mode gets people killed by accident.
+  // Ctrl+A takes the whole army. Plain A stays attack-move: an RTS player
+  // reaches for A far more often to attack-move than to select everything.
+  if (e.code === "KeyA" && (e.ctrlKey || e.metaKey)) {
+    e.preventDefault();
+    selected.clear();
+    for (const u of currUnits.values()) if (u.owner === playerId) selected.add(u.id);
+    selectedBuilding = null;
+    renderPanel();
+    return;
+  }
+  if (e.code === "KeyE" && !e.repeat) {
+    // Combat units only -- the army without the dozers and harvesters, which
+    // is what "select everything" almost always means in practice.
+    selected.clear();
+    for (const u of currUnits.values()) {
+      if (u.owner === playerId && unitDef(u.type).weapon) selected.add(u.id);
+    }
+    selectedBuilding = null;
+    renderPanel();
+    return;
+  }
   if (e.code === "KeyA" && !e.repeat && selected.size > 0) attackMoveArmed = true;
   if (e.code === "Escape" && !lobby.hidden) {
     lobby.hidden = true;
@@ -436,6 +457,13 @@ canvas.addEventListener("pointerdown", (e) => {
   }
 });
 
+canvas.addEventListener("dblclick", (e) => {
+  const hit = unitAtScreen(e.clientX, e.clientY);
+  if (!hit || hit.owner !== playerId) return;
+  selectSameType(hit.type, e.ctrlKey || e.metaKey);
+  renderPanel();
+});
+
 canvas.addEventListener("pointerup", (e) => {
   if (e.button !== 0 || !dragStart) return;
   const moved = Math.hypot(e.clientX - dragStart.x, e.clientY - dragStart.y);
@@ -446,8 +474,19 @@ canvas.addEventListener("pointerup", (e) => {
     const hit = unitAtScreen(e.clientX, e.clientY);
     const hitBuilding = buildingAtScreen(e.clientX, e.clientY);
     if (hit) {
-      if (!e.shiftKey) selected.clear();
-      if (hit.owner === playerId) selected.add(hit.id);
+      if (hit.owner !== playerId) {
+        // Clicking an enemy with nothing selected is a look, not an order.
+        if (!e.shiftKey) selected.clear();
+      } else if (!e.shiftKey) {
+        selected.clear();
+        selected.add(hit.id);
+      } else if (selected.has(hit.id)) {
+        // Shift on something already picked removes it. Additive-only shift
+        // means a misclick can only be undone by starting the selection again.
+        selected.delete(hit.id);
+      } else {
+        selected.add(hit.id);
+      }
       selectedBuilding = null;
       renderPanel();
     } else if (hitBuilding && hitBuilding.owner === playerId) {
@@ -657,8 +696,35 @@ function boxSelect(a: { x: number; y: number }, b: { x: number; y: number }): vo
   const p1 = renderer.screenToWorld(Math.max(a.x, b.x), Math.max(a.y, b.y));
   for (const u of currUnits.values()) {
     if (u.owner !== playerId) continue;
-    if (u.x >= p0.x && u.x <= p1.x && u.y >= p0.y && u.y <= p1.y) selected.add(u.id);
+    // Overlap, not centre-inside: a box drawn around a visible unit should
+    // take it, and at low zoom the difference is several pixels of slack.
+    const r = unitDef(u.type).radius;
+    if (u.x + r >= p0.x && u.x - r <= p1.x && u.y + r >= p0.y && u.y - r <= p1.y) {
+      selected.add(u.id);
+    }
   }
+}
+
+/**
+ * Every unit of one type, the way a double-click does it everywhere else.
+ *
+ * On screen by default rather than map-wide: grabbing the tanks in front of you
+ * is the common case, and quietly adding a tank from the far side of the map to
+ * an attack is how armies wander off. Ctrl widens it to everything you own.
+ */
+function selectSameType(type: string, everywhere: boolean): void {
+  const view = {
+    x0: renderer.camX, y0: renderer.camY,
+    x1: renderer.camX + innerWidth / renderer.tilePx,
+    y1: renderer.camY + innerHeight / renderer.tilePx,
+  };
+  selected.clear();
+  for (const u of currUnits.values()) {
+    if (u.owner !== playerId || u.type !== type) continue;
+    if (!everywhere && (u.x < view.x0 || u.x > view.x1 || u.y < view.y0 || u.y > view.y1)) continue;
+    selected.add(u.id);
+  }
+  selectedBuilding = null;
 }
 
 function issueMoveAt(sx: number, sy: number): void {
@@ -731,7 +797,34 @@ renderer.app.ticker.add(() => {
     renderer.drawPlacementGhost({ x: gx, y: gy, size, ok: economy.credits >= buildingDef(placing).cost });
   }
 
+  // Reach of everything selected, from the same defs the server fires with, so
+  // the ring is the real engagement distance and not a drawing of one.
+  const rings: Array<{ x: number; y: number; r: number; strong: boolean }> = [];
+  for (const u of drawList) {
+    if (!selected.has(u.id)) continue;
+    const range = unitDef(u.type).weapon?.range;
+    if (range) rings.push({ x: u.x, y: u.y, r: range, strong: selected.size <= 3 });
+  }
+  if (selectedBuilding !== null) {
+    const b = buildings.find((x) => x.id === selectedBuilding);
+    const range = b ? buildingDef(b.type).weapon?.range : undefined;
+    if (b && range) {
+      const size = buildingDef(b.type).size;
+      rings.push({ x: b.x + size / 2, y: b.y + size / 2, r: range, strong: true });
+    }
+  }
+  renderer.drawRanges(rings);
   renderer.drawUnits(drawList, selected);
+  // Per-frame view state for tests: selection and range rings are drawn, not
+  // stored, so without this there is nothing to assert against but pixels.
+  // Separate from __rts on purpose -- that object is replaced wholesale by
+  // every snapshot, so fields written here would be raced away 15 times a
+  // second and read back as undefined.
+  (window as unknown as { __rtsView?: unknown }).__rtsView = {
+    selected: selected.size,
+    rangeRings: rings.length,
+    selectedBuilding,
+  };
 
   // Age out tracers, then draw what is left with a linear fade.
   while (liveTracers.length > 0 && now - liveTracers[0]!.at > TRACER_MS) liveTracers.shift();

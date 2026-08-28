@@ -42,6 +42,7 @@ export class Renderer {
   private terrainSprite = new Sprite();
   private supplyLayer = new Graphics();
   private buildingLayer = new Graphics();
+  private rangeLayer = new Graphics();
   private unitLayer = new Graphics();
   private fxLayer = new Graphics();
   private fogLayer = new Graphics();
@@ -61,6 +62,8 @@ export class Renderer {
   private buildingContainer = new Container();
   private supplySprites = new Map<number, Sprite>();
   private supplyContainer = new Container();
+  private selectSprites = new Map<number, Sprite>();
+  private selectContainer = new Container();
   /** The sheet as a bitmap, for compositing terrain outside of Pixi. */
   private sheet: ImageBitmap | null = null;
   private cells: Record<string, { x: number; y: number; w: number; h: number }> = {};
@@ -88,6 +91,8 @@ export class Renderer {
       this.supplyContainer,
       this.buildingLayer,
       this.buildingContainer,
+      this.rangeLayer,
+      this.selectContainer,
       this.unitLayer,
       this.unitContainer,
       this.fxLayer,
@@ -275,6 +280,29 @@ export class Renderer {
     }
   }
 
+  /**
+   * Weapon reach of everything selected.
+   *
+   * Under the units rather than over them, so a big selection does not bury
+   * the army it describes. Alpha falls off with the number of rings: forty
+   * overlapping circles at readable strength is a white disc, and the useful
+   * reading from a large selection is the shape of its coverage, not any one
+   * unit's ring.
+   */
+  drawRanges(rings: Array<{ x: number; y: number; r: number; strong: boolean }>): void {
+    const g = this.rangeLayer;
+    g.clear();
+    if (rings.length === 0) return;
+    const alpha = Math.max(0.09, Math.min(0.5, 0.75 / Math.sqrt(rings.length)));
+    for (const c of rings) {
+      g.circle(c.x, c.y, c.r).stroke({
+        color: c.strong ? 0xffd27a : 0xf0e3b8,
+        width: (c.strong ? 0.1 : 0.06) / this.zoom,
+        alpha: c.strong ? Math.max(alpha, 0.55) : alpha,
+      });
+    }
+  }
+
   /** Ghost footprint that follows the cursor while placing a building. */
   drawPlacementGhost(ghost: { x: number; y: number; size: number; ok: boolean } | null): void {
     if (!ghost) return;
@@ -323,12 +351,22 @@ export class Renderer {
     g.clear();
 
     const live = new Set<number>();
+    const picked = new Set<number>();
+    const ring = this.atlas.get("overlay.selection");
     for (const u of units) {
       live.add(u.id);
       const color = PLAYER_COLOR[u.owner % PLAYER_COLOR.length]!;
 
-      if (selected.has(u.id)) {
-        // Selection ring under the body so it reads as a halo.
+      if (selected.has(u.id) && ring) {
+        // The drawn ring, not a filled disc: at this sprite size a disc large
+        // enough to be seen is large enough to hide the unit standing on it.
+        picked.add(u.id);
+        const sp = this.sprite(this.selectSprites, this.selectContainer, u.id, ring);
+        sp.position.set(u.x, u.y);
+        sp.rotation = 0;
+        sp.scale.set(Math.max(1.15, u.radius * 3.6) / ring.frame.width);
+        sp.tint = 0xdff5d0;
+      } else if (selected.has(u.id)) {
         g.circle(u.x, u.y, u.radius * 1.45).fill(0xffffff);
       }
 
@@ -352,6 +390,7 @@ export class Renderer {
       this.healthBar(g, u.x, u.y - u.radius - 0.3, u.radius * 2.2, u.hpFrac);
     }
     this.reap(this.unitSprites, live);
+    this.reap(this.selectSprites, picked);
     for (const id of [...this.facing.keys()]) if (!live.has(id)) this.facing.delete(id);
   }
 

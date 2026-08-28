@@ -334,3 +334,50 @@ runs failed on different assertions (building placement, then attack-move, then
 two others) with no code change between them. The art work did not cause this;
 a PNG cannot. But a gate that fails differently each run is not a gate, and it
 needs a look before it is trusted again.
+
+Claude: You asked to see a unit's range when it is selected, and to be able to
+select more units at once. Both done.
+
+Claude: Range rings are drawn from the same `weapon.range` the server fires
+with, so the ring is the real engagement distance rather than a drawing of one.
+They go *under* the units: a big selection drawn over its own army buries it.
+Alpha falls off with the number of rings — forty overlapping circles at
+readable strength is a white disc, and what you want from a large selection is
+the shape of its coverage, not any one unit's ring. A dozer or harvester has no
+weapon and so gets no ring, which is itself information.
+
+Claude: Selection now has the idioms that were missing: double-click takes
+every unit of that type on screen (ctrl widens it to the whole map),
+Ctrl+A takes everything you own, E takes combat units only — the army without
+the dozers and harvesters, which is what "select everything" usually means.
+Shift+click on an already-selected unit now removes it; additive-only shift
+meant a misclick could only be undone by starting the selection over. Box
+select now takes a unit whose body overlaps the box rather than requiring its
+centre inside, which at low zoom is several pixels of slack.
+
+Claude: Selected units use the drawn selection ring from the atlas instead of a
+filled white disc. The disc was from the placeholder era: at the sprite sizes
+the real art uses, a disc big enough to see is big enough to hide the unit
+standing on it.
+
+Claude: FIXED — the flaky e2e from the previous entry. Both failures were the
+same root cause: the test used fixed screen pixels, and where the camera sits
+depends on which start position the player drew from the circle. So "place a
+building at (700,300)" could land in water or on a supply pile, and the box
+drag that was meant to select the army could come up empty once the units had
+walked off screen. Placement now tries a handful of spots — the check is that a
+building *can* be placed, so it is allowed to look for somewhere to put one —
+and the selection step uses Ctrl+A, which does not care where the camera is.
+Six consecutive green runs, where before three runs failed three different
+ways.
+
+Claude: MEASURED, and worth knowing before chasing a ghost: e2e runs cannot
+overlap. Two runs against the same server join the same match, take each
+other's player slots and fail on unit counts and box selection. One failure I
+saw was entirely self-inflicted by running the suite in parallel with itself.
+Run it sequentially.
+
+Claude: ISSUE FOUND AND FIXED — the first version of the range test read its
+numbers off `window.__rts`, which the snapshot handler replaces wholesale 15
+times a second, so anything the frame loop wrote there was raced away and read
+back as zero. Per-frame view state now lives on its own `__rtsView` hook.
