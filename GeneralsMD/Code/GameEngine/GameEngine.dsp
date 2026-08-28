@@ -738,6 +738,14 @@ SOURCE=.\Source\GameLogic\AI\AISkirmishPlayer.cpp
 # End Source File
 # Begin Source File
 
+SOURCE=.\Source\GameLogic\AI\AISmartSkirmishPlayer.cpp
+# End Source File
+# Begin Source File
+
+SOURCE=.\Source\GameLogic\AI\SkirmishEnemyModel.cpp
+# End Source File
+# Begin Source File
+
 SOURCE=.\Source\GameLogic\AI\AIStates.cpp
 # End Source File
 # Begin Source File
@@ -4265,6 +4273,14 @@ SOURCE=.\Include\GameLogic\AIPlayer.h
 # Begin Source File
 
 SOURCE=.\Include\GameLogic\AISkirmishPlayer.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\Include\GameLogic\AISmartSkirmishPlayer.h
+# End Source File
+# Begin Source File
+
+SOURCE=.\Include\GameLogic\SkirmishEnemyModel.h
 # End Source File
 # Begin Source File
 

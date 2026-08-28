@@ -774,6 +774,7 @@ GlobalData::GlobalData()
 //	m_inGame = FALSE;	
 
 	m_noDraw = 0;
+	m_useSmartAI = FALSE;
 	m_particleScale = 1.0f;
 
 	m_autoFireParticleSmallMax = 0;

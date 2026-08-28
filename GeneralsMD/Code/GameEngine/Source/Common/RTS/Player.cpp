@@ -80,6 +80,7 @@
 #include "GameLogic/AI.h"
 #include "GameLogic/AIPathfind.h"
 #include "GameLogic/AISkirmishPlayer.h"
+#include "GameLogic/AISmartSkirmishPlayer.h"
 #include "GameLogic/ExperienceTracker.h"
 #include "GameLogic/Object.h"
 #include "GameLogic/Scripts.h"
@@ -779,7 +780,13 @@ void Player::setPlayerType(PlayerType t, Bool skirmish)
 	{
 		if (skirmish || TheAI->getAiData()->m_forceSkirmishAI) {
 			// create AIPlayer and attach to this Player
-			m_ai = newInstance(AISkirmishPlayer)( this );
+			if (TheGlobalData && TheGlobalData->m_useSmartAI) {
+				// -smartAI: reactive opponent that scores production against an
+				// observed model of the enemy rather than picking at random.
+				m_ai = newInstance(AISmartSkirmishPlayer)( this );
+			} else {
+				m_ai = newInstance(AISkirmishPlayer)( this );
+			}
 		} else {
 			// create AIPlayer and attach to this Player
 			m_ai = newInstance(AIPlayer)( this );

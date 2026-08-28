@@ -330,6 +330,19 @@ Int parseNoDraw(char *args[], int argc)
 }
 
 //=============================================================================
+// Opt in to AISmartSkirmishPlayer for computer players. Off by default so the
+// stock opponent stays the reference point when evaluating the new one.
+//=============================================================================
+Int parseSmartAI(char *args[], int argc)
+{
+	if (TheWritableGlobalData)
+	{
+		TheWritableGlobalData->m_useSmartAI = TRUE;
+	}
+	return 1;
+}
+
+//=============================================================================
 //=============================================================================
 Int parseLogToConsole(char *args[], int)
 {
@@ -1173,6 +1186,7 @@ static CommandLineParam params[] =
 	{ "-NetCRCInterval", parseNetCRCInterval },
 	{ "-ReplayCRCInterval", parseReplayCRCInterval },
 	{ "-noDraw", parseNoDraw },
+	{ "-smartAI", parseSmartAI },
 	{ "-nomilcap", parseNoMilCap },
 	{ "-nofade", parseNoFade },
 	{ "-nomovecamera", parseNoMoveCamera },
