@@ -1,0 +1,25 @@
+{
+  "name": "browser-rts",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev:server": "tsx watch server/index.ts",
+    "dev:client": "vite",
+    "build": "tsc --noEmit && vite build",
+    "server": "tsx server/index.ts",
+    "start": "npm run build && node --import tsx server/index.ts",
+    "test": "tsx test/run.ts"
+  },
+  "dependencies": {
+    "pixi.js": "^8.6.6",
+    "ws": "^8.18.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/ws": "^8.5.13",
+    "playwright": "^1.62.1",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^6.0.5"
+  }
+}

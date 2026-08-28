@@ -1,0 +1,56 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1, user-scalable=no" />
+    <title>Browser RTS</title>
+    <style>
+      :root { color-scheme: dark; }
+      * { margin: 0; padding: 0; box-sizing: border-box; }
+      html, body { height: 100%; overflow: hidden; background: #11150f; }
+      body {
+        font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
+        color: #cfe0c3;
+        /* The map is dragged and box-selected; native gestures fight both. */
+        touch-action: none;
+        user-select: none;
+      }
+      canvas { display: block; }
+      #hud {
+        position: fixed; top: 0; left: 0; padding: 8px 12px;
+        background: rgba(10, 14, 8, 0.72);
+        border-bottom-right-radius: 6px;
+        pointer-events: none;
+        white-space: pre;
+      }
+      #hint {
+        position: fixed; bottom: 0; left: 0; padding: 8px 12px;
+        background: rgba(10, 14, 8, 0.72);
+        border-top-right-radius: 6px;
+        pointer-events: none;
+        opacity: 0.75;
+      }
+    </style>
+  </head>
+  <body>
+    <div id="hud">connecting…</div>
+    <div id="hint">drag: select · right-click / click ground: move · WASD or edge: pan · wheel: zoom</div>
+    <script>
+      // A blank canvas with a silent console is the worst failure mode there
+      // is. Surface anything that escapes -- including a rejected top-level
+      // await in main.ts, which otherwise leaves the page looking merely slow.
+      function showFatal(what, detail) {
+        var hud = document.getElementById("hud");
+        if (hud) hud.textContent = what + "\n" + detail;
+      }
+      addEventListener("error", function (e) {
+        showFatal("script error", e.message || String(e.error));
+      });
+      addEventListener("unhandledrejection", function (e) {
+        var r = e.reason;
+        showFatal("startup failed", (r && (r.stack || r.message)) || String(r));
+      });
+    </script>
+    <script type="module" src="/src/main.ts"></script>
+  </body>
+</html>
