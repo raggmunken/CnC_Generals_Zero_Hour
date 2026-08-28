@@ -249,7 +249,10 @@ public:
 	Bool m_showTerrainNormals;
 
 	UnsignedInt m_noDraw;					///< Used to disable drawing, to profile game logic code.
-	Bool m_useSmartAI;						///< Use AISmartSkirmishPlayer instead of the stock skirmish AI.
+	Int m_smartAIPlayerMask;				///< Bit N set => player index N uses AISmartSkirmishPlayer.
+	Bool m_forceSkirmishAIOverride;		///< Command-line override for AIData::m_forceSkirmishAI.
+	AsciiString m_aiEvalOutputFile;		///< If set, append a match result record here and quit.
+	Int m_aiEvalMaxFrames;				///< Declare a draw after this many logic frames. 0 = no cap.
 	AIDebugOptions m_debugAI;			///< Used to display AI debug information
 	Bool m_debugSupplyCenterPlacement; ///< Dumps to log everywhere it thinks about placing a supply center
 	Bool m_debugAIObstacles;			///< Used to display AI obstacle debug information

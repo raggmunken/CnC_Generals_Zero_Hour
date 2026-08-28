@@ -96,6 +96,7 @@
 #include "GameLogic/ScriptConditions.h"
 #include "GameLogic/ScriptEngine.h"
 #include "GameLogic/SidesList.h"
+#include "GameLogic/AIEvalHarness.h"
 #include "GameLogic/VictoryConditions.h"
 #include "GameLogic/Weapon.h"
 #include "GameLogic/GhostObject.h"
@@ -1628,6 +1629,8 @@ void GameLogic::startNewGame( Bool loadingSaveGame )
 	// Tell the multiplayer victory condition singleton that the players are created
 	TheVictoryConditions->cachePlayerPtrs();
 	TheVictoryConditions->setVictoryConditions(VICTORY_NOBUILDINGS);
+
+	AIEvalHarness::reset();
 
 	// update the loadscreen 
 	updateLoadProgress(LOAD_PROGRESS_POST_VICTORY_CONDITION_SET_VICTORY_CONDITION);
@@ -3791,6 +3794,10 @@ void GameLogic::update( void )
 	TheWeaponStore->UPDATE();	
 	TheLocomotorStore->UPDATE();	
 	TheVictoryConditions->UPDATE();
+
+	// -aiEval: watch for the match resolving, write the record, and quit.
+	// Inert unless an output file was named on the command line.
+	AIEvalHarness::update();
 
 #ifdef DO_COPY_PROTECTION
 	if (!isInShellGame() && isInGame())

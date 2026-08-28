@@ -778,11 +778,18 @@ void Player::setPlayerType(PlayerType t, Bool skirmish)
 
 	if (t == PLAYER_COMPUTER)
 	{
-		if (skirmish || TheAI->getAiData()->m_forceSkirmishAI) {
-			// create AIPlayer and attach to this Player
-			if (TheGlobalData && TheGlobalData->m_useSmartAI) {
-				// -smartAI: reactive opponent that scores production against an
-				// observed model of the enemy rather than picking at random.
+		const Bool forceSkirmish = (TheGlobalData && TheGlobalData->m_forceSkirmishAIOverride);
+
+		if (skirmish || forceSkirmish || TheAI->getAiData()->m_forceSkirmishAI) {
+			// create AIPlayer and attach to this Player.
+			// m_playerIndex is assigned in the constructor, so it is already
+			// valid here and safe to test against the smart-AI mask.
+			const Bool useSmart = TheGlobalData
+						&& (TheGlobalData->m_smartAIPlayerMask & (1 << m_playerIndex)) != 0;
+
+			if (useSmart) {
+				// Reactive opponent that scores production against an observed
+				// model of the enemy rather than picking at random.
 				m_ai = newInstance(AISmartSkirmishPlayer)( this );
 			} else {
 				m_ai = newInstance(AISkirmishPlayer)( this );

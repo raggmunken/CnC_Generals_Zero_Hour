@@ -774,7 +774,10 @@ GlobalData::GlobalData()
 //	m_inGame = FALSE;	
 
 	m_noDraw = 0;
-	m_useSmartAI = FALSE;
+	m_smartAIPlayerMask = 0;
+	m_forceSkirmishAIOverride = FALSE;
+	m_aiEvalOutputFile.clear();
+	m_aiEvalMaxFrames = 0;
 	m_particleScale = 1.0f;
 
 	m_autoFireParticleSmallMax = 0;

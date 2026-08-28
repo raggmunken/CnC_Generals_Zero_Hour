@@ -75,6 +75,9 @@ GameEngine/Include/GameLogic/SkirmishEnemyModel.h
 GameEngine/Source/GameLogic/AI/SkirmishEnemyModel.cpp
 GameEngine/Include/GameLogic/AISmartSkirmishPlayer.h
 GameEngine/Source/GameLogic/AI/AISmartSkirmishPlayer.cpp
+GameEngine/Include/GameLogic/AIEvalHarness.h
+GameEngine/Source/GameLogic/AI/AIEvalHarness.cpp
+tools/ai_eval/run_eval.py
 ```
 
 Wiring touched:
@@ -90,11 +93,16 @@ Wiring touched:
 ## Enabling it
 
 ```
-generals.exe -smartAI
+generals.exe -smartAI                 # every computer player uses it
+generals.exe -smartAIPlayers 1,3      # only those player indices
 ```
 
 Off by default. The stock opponent stays the reference point, so A/B comparison
-is a single flag rather than two builds.
+is a flag rather than a second build.
+
+`-smartAIPlayers` is what makes a proper experiment possible: smart and stock
+can play *each other* inside one match, which is much stronger evidence than
+comparing two separate runs against a third party.
 
 ## Building
 
@@ -103,7 +111,7 @@ against [GeneralsGameCode](https://github.com/TheSuperHackers/GeneralsGameCode)
 (recommended — VS2022/C++20, Windows and Linux) or a
 [GeneralsX](https://github.com/fbraz3/GeneralsX) fork, confirm whether its
 CMakeLists globs `Source/GameLogic/AI/*.cpp` or lists sources explicitly, and
-add the two new `.cpp` files if the latter.
+add the three new `.cpp` files if the latter.
 
 ## Tuning
 
@@ -122,26 +130,91 @@ grouped so they can be swept:
 `MEMORY_HALF_LIFE_SECONDS` in `SkirmishEnemyModel.cpp` sets how sharp the AI's
 memory is.
 
-## Known gap: headless batch evaluation
+Do not tune these by playing. Use the harness.
 
-Tuning the above by hand is guesswork without a way to run many games fast. The
-engine has the capability but the flag is gated:
+---
 
-- `-noDraw`'s body sits inside `#ifdef DEBUG_CRC` (`CommandLine.cpp`), so it is
-  a no-op in a release build.
-- `-jumpToFrame N` sets `m_noDraw` unconditionally and also disables the FPS
-  limit — the usable fast-forward route in any build.
+# Evaluation harness (Tier 1.5)
 
-Un-gating `parseNoDraw` is a one-line change and is the next piece of work: an
-evaluation harness that runs N games of smart-vs-stock and reports win rate is
-what turns AI tuning from vibes into measurement. It is also the same
-infrastructure self-play needs later.
+Tuning by hand is guesswork. This runs matches in bulk and reports whether a
+change actually helped.
+
+## Engine support
+
+`AIEvalHarness` watches a running match, decides when it has resolved, appends
+a machine-readable record, and quits. It hooks into `GameLogic::update()` right
+after `TheVictoryConditions->UPDATE()` and is inert unless `-aiEval` names an
+output file.
+
+A contender is identified as a player who has built *something*, rather than by
+player type — maps vary in how they declare neutral and civilian sides, but by
+the time a match resolves the real participants have production on the board and
+the scenery sides do not.
+
+New flags:
+
+| Flag | Effect |
+|---|---|
+| `-aiEval <file>` | append a match record to `<file>`, then quit |
+| `-aiEvalMaxFrames N` | declare a draw after N logic frames |
+| `-forceSkirmishAI` | use the skirmish AI on a map launched via `-file` |
+| `-smartAIPlayers a,b` | per-player smart AI assignment |
+
+`-noDraw` was previously a no-op: its body sat inside `#ifdef DEBUG_CRC`, so it
+did nothing in a release build. It is now un-gated, since batch evaluation needs
+renderless runs from a normal build and `m_noDraw` is only read by the display
+path. (`-jumpToFrame N` also sets it, and remains the way to fast-forward.)
+
+## Record format
+
+Flat `key=value` text, one block per match — trivial to parse and safe to
+concatenate across runs:
+
+```
+RESULT reason=victory endFrame=28744 map=... winner=1
+PLAYER idx=1 name=PlyrAmerica ai=smart defeated=0 unitsBuilt=84 unitsLost=51 ...
+PLAYER idx=2 name=PlyrChina   ai=stock defeated=1 unitsBuilt=79 unitsLost=88 ...
+END
+```
+
+## Driver
+
+```
+tools/ai_eval/run_eval.py --exe ./generalszh \
+    --map "Maps/Tournament Desert/Tournament Desert.map" \
+    --games 40 --players 1,2
+```
+
+Two things it does that make the output mean something:
+
+**Side swapping.** Each run alternates which slot gets the smart AI. On an
+asymmetric map, starting position can matter more than AI quality; without
+swapping you measure the map, not the bot.
+
+**Interval estimates.** A 7-3 record over ten games is not evidence. The driver
+reports Wilson score intervals and only calls a difference when they separate,
+so a promising-looking gap does not get mistaken for a result.
+
+Sample output:
+
+```
+AI        played    wins  winrate   95% interval
+----------------------------------------------------------
+smart         40      27    67.5%   [52.0%, 79.9%]
+stock         40      13    32.5%   [20.1%, 48.0%]
+
+=> smart AI is ahead; the intervals do not overlap.
+```
+
+Mean per-AI economy and production figures are printed too, which is usually
+where you see *why* a change helped or hurt.
 
 ## Roadmap
 
 **Tier 1 (this change)** — enemy model, counter-composition scoring, toggle.
 
-**Tier 1.5** — headless eval harness; baseline the stock AI, then measure.
+**Tier 1.5 (done)** — headless eval harness with side swapping and interval
+estimates.
 
 **Tier 2** — deliberate scouting, expansion and map control, army-value-based
 engage/retreat, per-faction build-order openings, superweapon targeting via the

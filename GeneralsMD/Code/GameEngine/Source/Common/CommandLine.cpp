@@ -320,24 +320,98 @@ Int parseReplayCRCInterval(char *args[], int argc)
 //=============================================================================
 Int parseNoDraw(char *args[], int argc)
 {
-#ifdef DEBUG_CRC
+	// Formerly gated behind DEBUG_CRC, which made this a no-op in release
+	// builds. Batch AI evaluation needs renderless runs from a normal build,
+	// and m_noDraw is only read by the display path.
 	if (TheWritableGlobalData)
 	{
 		TheWritableGlobalData->m_noDraw = TRUE;
 	}
-#endif
 	return 1;
 }
 
 //=============================================================================
-// Opt in to AISmartSkirmishPlayer for computer players. Off by default so the
-// stock opponent stays the reference point when evaluating the new one.
+// Opt in to AISmartSkirmishPlayer. Off by default so the stock opponent stays
+// the reference point when evaluating the new one.
+//
+// -smartAI            every computer player uses the smart AI
+// -smartAIPlayers 1,3 only those player indices do -- this is what lets a
+//                     single match pit smart against stock head to head,
+//                     which is far better evidence than two separate runs.
 //=============================================================================
 Int parseSmartAI(char *args[], int argc)
 {
 	if (TheWritableGlobalData)
 	{
-		TheWritableGlobalData->m_useSmartAI = TRUE;
+		TheWritableGlobalData->m_smartAIPlayerMask = -1;	// all bits
+	}
+	return 1;
+}
+
+Int parseSmartAIPlayers(char *args[], int num)
+{
+	if (TheWritableGlobalData && num > 1)
+	{
+		Int mask = 0;
+		const char *p = args[1];
+
+		while (*p)
+		{
+			if (*p >= '0' && *p <= '9')
+			{
+				Int idx = 0;
+				while (*p >= '0' && *p <= '9')
+				{
+					idx = (idx * 10) + (*p - '0');
+					++p;
+				}
+				if (idx >= 0 && idx < 32)
+					mask |= (1 << idx);
+			}
+			else
+			{
+				++p;	// skip commas and any other separator
+			}
+		}
+
+		TheWritableGlobalData->m_smartAIPlayerMask = mask;
+		return 2;
+	}
+	return 1;
+}
+
+//=============================================================================
+// Force the skirmish AI even on a map launched via -file, which otherwise
+// starts as GAME_SINGLE_PLAYER and gets the solo (script-driven) AI.
+//=============================================================================
+Int parseForceSkirmishAI(char *args[], int argc)
+{
+	if (TheWritableGlobalData)
+	{
+		TheWritableGlobalData->m_forceSkirmishAIOverride = TRUE;
+	}
+	return 1;
+}
+
+//=============================================================================
+// Batch evaluation: write a result record for the match and quit.
+//=============================================================================
+Int parseAIEval(char *args[], int num)
+{
+	if (TheWritableGlobalData && num > 1)
+	{
+		TheWritableGlobalData->m_aiEvalOutputFile.set(args[1]);
+		return 2;
+	}
+	return 1;
+}
+
+Int parseAIEvalMaxFrames(char *args[], int num)
+{
+	if (TheWritableGlobalData && num > 1)
+	{
+		TheWritableGlobalData->m_aiEvalMaxFrames = atoi(args[1]);
+		return 2;
 	}
 	return 1;
 }
@@ -1187,6 +1261,10 @@ static CommandLineParam params[] =
 	{ "-ReplayCRCInterval", parseReplayCRCInterval },
 	{ "-noDraw", parseNoDraw },
 	{ "-smartAI", parseSmartAI },
+	{ "-smartAIPlayers", parseSmartAIPlayers },
+	{ "-forceSkirmishAI", parseForceSkirmishAI },
+	{ "-aiEval", parseAIEval },
+	{ "-aiEvalMaxFrames", parseAIEvalMaxFrames },
 	{ "-nomilcap", parseNoMilCap },
 	{ "-nofade", parseNoFade },
 	{ "-nomovecamera", parseNoMoveCamera },
