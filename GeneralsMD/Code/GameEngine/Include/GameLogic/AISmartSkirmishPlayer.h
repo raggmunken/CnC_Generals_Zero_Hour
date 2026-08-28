@@ -41,10 +41,18 @@
 #define _AI_SMART_SKIRMISH_PLAYER_H_
 
 #include "Common/GameMemory.h"
+
+// These must precede AISkirmishPlayer.h. AIPlayer.h and AISkirmishPlayer.h use
+// all three in member declarations but rely on the including translation unit
+// having already declared them -- AISkirmishPlayer.cpp gets away with it by
+// including Common/Team.h and friends first. Declaring them here keeps this
+// header self-contained instead of imposing an include order on every user.
+class TeamPrototype;
+class SpecialPowerTemplate;
+class Waypoint;
+
 #include "GameLogic/AISkirmishPlayer.h"
 #include "GameLogic/SkirmishEnemyModel.h"
-
-class TeamPrototype;
 
 /**
  * Skirmish AI with an enemy model and counter-composition scoring.
@@ -58,10 +66,10 @@ public:
 	AISmartSkirmishPlayer( Player *p );
 
 	/// Tick the enemy model, then run the inherited strategic update.
-	virtual void update( void );
+	virtual void update( void ) override;
 
 	/// Clear accumulated knowledge when a new map loads.
-	virtual void newMap( void );
+	virtual void newMap( void ) override;
 
 	/// Read-only access, for debug overlays and for a future strategic layer.
 	const SkirmishEnemyModel *getEnemyModel( void ) const { return &m_enemyModel; }
@@ -69,7 +77,7 @@ public:
 protected:
 
 	/// Scored replacement for the stock random pick.
-	virtual Bool selectTeamToBuild( void );
+	virtual Bool selectTeamToBuild( void ) override;
 
 	/**
 		Rate how badly we want this team right now.

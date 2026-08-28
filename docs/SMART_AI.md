@@ -104,14 +104,64 @@ is a flag rather than a second build.
 can play *each other* inside one match, which is much stronger evidence than
 comparing two separate runs against a third party.
 
-## Building
+## Building — verified recipe
 
-The `.dsp` is updated for the VS6 project in this tree. If you are building
-against [GeneralsGameCode](https://github.com/TheSuperHackers/GeneralsGameCode)
-(recommended — VS2022/C++20, Windows and Linux) or a
-[GeneralsX](https://github.com/fbraz3/GeneralsX) fork, confirm whether its
-CMakeLists globs `Source/GameLogic/AI/*.cpp` or lists sources explicitly, and
-add the three new `.cpp` files if the latter.
+**This has been compiled.** The three new translation units build clean (zero
+warnings) against the real headers with a real toolchain. What follows is the
+exact recipe that worked, not a guess.
+
+### Native Linux does not work (yet)
+
+Upstream [GeneralsGameCode](https://github.com/TheSuperHackers/GeneralsGameCode)
+does **not** build the Zero Hour engine natively on Linux at present.
+`Core/GameEngine/Include/Precompiled/PreRTS.h` unconditionally includes
+`atlbase.h`, `windows.h`, `direct.h`, `imagehlp.h` and friends; the ATL compat
+shim is gated on `defined(__GNUC__) && defined(_WIN32)`. The README's "Linux"
+support means cross-compiling a *Windows* binary via MinGW in Docker, and
+"Cross-Platform Support (Linux, macOS)" is listed as wanted-help rather than
+done. Native ports live in the [GeneralsX](https://github.com/fbraz3/GeneralsX)
+forks (SDL3 / DXVK / OpenAL).
+
+### MinGW cross-compile (what was verified)
+
+On Ubuntu 24.04:
+
+```sh
+apt-get update
+apt-get install -y gcc-multilib g++-multilib \
+                   g++-mingw-w64-i686 gcc-mingw-w64-i686 \
+                   ninja-build wine64-tools    # wine64-tools provides widl
+
+git clone --depth 1 https://github.com/TheSuperHackers/GeneralsGameCode.git
+cd GeneralsGameCode
+cmake --preset mingw-w64-i686
+```
+
+`wine64-tools` is the non-obvious one: the EABrowserDispatch COM component needs
+an IDL compiler, and CMake hard-fails configure without it. The error message
+suggests `wine-stable-dev`, which on 24.04 does not ship `widl`.
+
+The result is a 32-bit Windows binary, runnable under Wine.
+
+### Adding these files
+
+The fork lists sources explicitly — it does **not** glob — so the three new
+`.cpp` files must be added to
+`GeneralsMD/Code/GameEngine/CMakeLists.txt` alongside the existing
+`Source/GameLogic/AI/AISkirmishPlayer.cpp` entry:
+
+```
+    Source/GameLogic/AI/AIEvalHarness.cpp
+    Source/GameLogic/AI/AISmartSkirmishPlayer.cpp
+    Source/GameLogic/AI/SkirmishEnemyModel.cpp
+```
+
+Headers and the wiring changes (GlobalData, CommandLine, Player, GameLogic,
+MemoryInit) port across unchanged — the fork keeps the same paths under
+`GeneralsMD/Code/GameEngine/`.
+
+The `.dsp` in this tree is also updated, but the VS6 project is not a realistic
+build path for this work.
 
 ## Tuning
 
