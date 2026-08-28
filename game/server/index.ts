@@ -12,6 +12,7 @@ import { WebSocketServer, type WebSocket } from "ws";
 
 import { generateMap, generateSupplyNodes } from "./mapgen.js";
 import { mapPreset } from "../shared/content.js";
+import { AIPlayer, type Difficulty } from "./ai.js";
 import { Sim, TICK_RATE } from "./sim.js";
 import type { ClientMsg, ServerMsg } from "../shared/protocol.js";
 import type { FactionId } from "../shared/types.js";
@@ -33,6 +34,9 @@ const preset = mapPreset(PLAYERS);
 const { map, starts } = generateMap(preset.players, Number(process.env.SEED ?? 1));
 const sim = new Sim(map);
 sim.setSupplyNodes(generateSupplyNodes(map, starts));
+
+/** Computer opponents, ticked with the simulation. */
+const bots: AIPlayer[] = [];
 
 /** Sockets by player id, so a disconnect frees its slot. */
 const clients = new Map<number, WebSocket>();
@@ -79,17 +83,53 @@ const httpServer = createServer(async (req, res) => {
 
 const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
+/** Give a player their opening base: a command centre, a dozer, an escort. */
+function spawnStartingBase(playerId: number, start: { x: number; y: number }): void {
+  const cc = sim.placeBuilding(playerId, "command_center", Math.floor(start.x) - 1, Math.floor(start.y) - 1);
+  if (cc) {
+    cc.buildRemaining = 0; // the starting base is not under construction
+  } else {
+    console.warn(`player ${playerId}: command centre could not be placed at its start`);
+  }
+  sim.spawnUnit(playerId, "dozer", start.x + 2.5, start.y + 2.5);
+  for (let i = 0; i < 2; i++) {
+    sim.spawnUnit(playerId, "infantry", start.x + 3 + i * 0.9, start.y + 4);
+  }
+}
+
+/**
+ * Fill the remaining slots with bots.
+ *
+ * Done up front rather than on demand so a single human always has an
+ * opponent: without this, solo play is a base builder with nobody to fight.
+ */
+const BOTS = Math.max(0, Math.min(preset.players - 1, Number(process.env.BOTS ?? preset.players - 1)));
+const BOT_DIFFICULTY = (process.env.DIFFICULTY ?? "normal") as Difficulty;
+
+for (let i = 0; i < BOTS; i++) {
+  const id = preset.players - 1 - i;
+  const start = starts[id]!;
+  sim.addPlayer({ id, name: `Bot ${i + 1}`, faction: "china", team: id });
+  spawnStartingBase(id, start);
+  bots.push(new AIPlayer(sim, id, BOT_DIFFICULTY));
+}
+const botIds = new Set(bots.map((b) => b.playerId));
+
 wss.on("connection", (ws) => {
   // Refuse rather than overlap: a player without a start position spawns on
   // top of someone else's base and silently gets no command centre.
-  if (clients.size >= starts.length) {
+  if (clients.size + botIds.size >= starts.length) {
     ws.close(1013, "match full");
     return;
   }
 
-  // Reuse the lowest free slot so leavers free their start position.
+  // Reuse the lowest free human slot; bot slots are taken.
   let playerId = 0;
-  while (clients.has(playerId)) playerId++;
+  while (clients.has(playerId) || botIds.has(playerId)) playerId++;
+  if (playerId >= starts.length) {
+    ws.close(1013, "match full");
+    return;
+  }
   nextPlayerId = Math.max(nextPlayerId, playerId + 1);
   const start = starts[playerId % starts.length]!;
   const faction = FACTIONS[playerId % FACTIONS.length]!;
@@ -103,16 +143,7 @@ wss.on("connection", (ws) => {
 
   // Start as Generals does: a command centre already standing, a dozer to
   // expand with, and a token escort. Everything else is earned.
-  const cc = sim.placeBuilding(playerId, "command_center", Math.floor(start.x) - 1, Math.floor(start.y) - 1);
-  if (cc) {
-    cc.buildRemaining = 0; // the starting base is not under construction
-  } else {
-    console.warn(`player ${playerId}: command centre could not be placed at its start`);
-  }
-  sim.spawnUnit(playerId, "dozer", start.x + 2.5, start.y + 2.5);
-  for (let i = 0; i < 2; i++) {
-    sim.spawnUnit(playerId, "infantry", start.x + 3 + i * 0.9, start.y + 4);
-  }
+  spawnStartingBase(playerId, start);
 
   clients.set(playerId, ws);
   console.log(`player ${playerId} joined (${faction}); ${clients.size} connected`);
@@ -152,6 +183,7 @@ wss.on("connection", (ws) => {
 });
 
 setInterval(() => {
+  for (const bot of bots) bot.update();
   sim.step();
 
   // Snapshots are per-player: units and buildings are public, but a player
@@ -172,6 +204,7 @@ setInterval(() => {
 httpServer.listen(PORT, () => {
   console.log(
     `server listening on http://localhost:${PORT} (tick ${TICK_RATE}Hz, ` +
-      `map "${preset.name}" ${map.width}x${map.height} for ${preset.players} players)`,
+      `map "${preset.name}" ${map.width}x${map.height} for ${preset.players} players, ` +
+      `${BOTS} bot${BOTS === 1 ? "" : "s"} on ${BOT_DIFFICULTY})`,
   );
 });

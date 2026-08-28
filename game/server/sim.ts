@@ -59,12 +59,23 @@ export class Sim {
 
   /** 1 where nothing can stand: impassable terrain or a building footprint. */
   private blocked: Uint8Array;
-  /** Set when buildings change, so the grid is rebuilt at most once a tick. */
+  /**
+   * The same grid inflated by one tile, for bodies wider than a tile.
+   *
+   * A* reasons about tile centres and would otherwise treat every unit as a
+   * point, routing a wide unit through a gap its body cannot fit. A unit of
+   * radius r centred on a tile centre overhangs into the orthogonal
+   * neighbours whenever r > 0.5, so those tiles are unusable to it. This is
+   * what "footprint" has to mean for pathing as well as for collision.
+   */
+  private blockedWide: Uint8Array;
+  /** Set when buildings change, so the grids are rebuilt at most once a tick. */
   private blockedDirty = true;
 
   constructor(map: MapData) {
     this.map = map;
     this.blocked = new Uint8Array(map.width * map.height);
+    this.blockedWide = new Uint8Array(map.width * map.height);
     this.rebuildBlocked();
   }
 
@@ -88,7 +99,29 @@ export class Sim {
         }
       }
     }
+    // Inflate by one tile orthogonally. Diagonals are not needed: the widest
+    // unit has radius 0.6, which overhangs an edge but never a corner.
+    const { width: w, height: h } = this.map;
+    for (let y = 0; y < h; y++) {
+      for (let x = 0; x < w; x++) {
+        const i = y * w + x;
+        this.blockedWide[i] =
+          this.blocked[i] ||
+          (x > 0 && this.blocked[i - 1]) ||
+          (x < w - 1 && this.blocked[i + 1]) ||
+          (y > 0 && this.blocked[i - w]) ||
+          (y < h - 1 && this.blocked[i + w])
+            ? 1
+            : 0;
+      }
+    }
+
     this.blockedDirty = false;
+  }
+
+  /** The grid a body of this radius may path on. */
+  private gridFor(radius: number): Uint8Array {
+    return radius > 0.5 ? this.blockedWide : this.blocked;
   }
 
   /**
@@ -110,13 +143,14 @@ export class Sim {
 
     if (this.blockedDirty) this.rebuildBlocked();
 
-    const raw = findPath(this.blocked, this.map.width, this.map.height, u, { x, y });
+    const grid = this.gridFor(unitDef(u.type).radius);
+    const raw = findPath(grid, this.map.width, this.map.height, u, { x, y });
     if (raw === null) {
       // Nowhere to go: keep the destination so the unit still nudges toward it
       // via direct steering, rather than freezing with no explanation.
       u.path = undefined;
     } else {
-      const smoothed = smoothPath(this.blocked, this.map.width, this.map.height, u, raw);
+      const smoothed = smoothPath(grid, this.map.width, this.map.height, u, raw);
       // The final waypoint is the tile centre; use the true destination so
       // units stop where they were told, not where the grid rounded to.
       if (smoothed.length > 0) smoothed[smoothed.length - 1] = { x, y };
