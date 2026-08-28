@@ -6,7 +6,7 @@
  */
 import { BUILDINGS, buildingDef, unitDef, UNITS } from "../../shared/content.js";
 import type { ServerMsg } from "../../shared/protocol.js";
-import type { Building, Economy, Unit } from "../../shared/types.js";
+import type { Building, Economy, SupplyNode, Unit } from "../../shared/types.js";
 import { Net } from "./net.js";
 import { Renderer } from "./render.js";
 
@@ -35,6 +35,9 @@ let prevAt = 0;
 let currAt = 0;
 
 let buildings: Building[] = [];
+let supply: SupplyNode[] = [];
+/** Peak seen per node, so the shrinking pile has something to scale against. */
+const supplyMax = new Map<number, number>();
 let economy: Economy = { credits: 0, powerProduced: 0, powerConsumed: 0 };
 
 /** Building type queued for placement, or null when not placing. */
@@ -64,6 +67,10 @@ net.onMessage = (msg: ServerMsg) => {
     currUnits = new Map(msg.units.map((u) => [u.id, u]));
     currAt = performance.now();
     buildings = msg.buildings;
+    supply = msg.supply;
+    for (const n of supply) {
+      supplyMax.set(n.id, Math.max(supplyMax.get(n.id) ?? 0, n.amount));
+    }
     economy = msg.economy;
     if (!centred) centreOnOwnUnits();
     if (selectedBuilding !== null && !buildings.some((b) => b.id === selectedBuilding)) {
@@ -189,6 +196,9 @@ canvas.addEventListener("wheel", (e) => {
   const after = renderer.screenToWorld(e.clientX, e.clientY);
   renderer.camX += before.x - after.x;
   renderer.camY += before.y - after.y;
+  // Zoom changes the view size, so the previous clamp no longer holds. Without
+  // this, zooming out walks the camera off the map and leaves it there.
+  clampCamera();
 }, { passive: false });
 
 function unitAtScreen(sx: number, sy: number): Unit | null {
@@ -405,6 +415,10 @@ renderer.app.ticker.add(() => {
       radius: def.radius,
     });
   }
+  renderer.drawSupply(
+    supply.map((n) => ({ x: n.x, y: n.y, amount: n.amount, max: supplyMax.get(n.id) ?? n.amount })),
+  );
+
   renderer.drawBuildings(
     buildings.map((b) => ({
       owner: b.owner,

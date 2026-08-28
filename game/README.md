@@ -68,11 +68,25 @@ obvious and still recoverable.
 All of it lives in `shared/content.ts` -- balance is a data edit, never a code
 edit.
 
+## Economy
+
+Supply piles sit two per base and three in a contested centre, which is what
+gives the map an early game and a mid game. Harvesters work automatically --
+seek, gather, return, unload -- because babysitting them is busywork, not
+strategy. A direct move order takes one off automatic so it stays where you
+sent it.
+
+Piles deplete, and their drawn radius tracks what is left, so the map reads its
+own economy without a UI overlay.
+
 ## Status
 
-Phases A and B complete and verified end to end in a real browser: simulation,
-transport, rendering, selection, movement, construction, production queues,
-power and the tech tree.
+Phases A and B complete and verified: simulation, transport, rendering,
+selection, movement, construction, production queues, power, the tech tree and
+a working harvester economy.
+
+`npm test` runs both suites -- headless simulation tests for the economy and
+tech tree, then the browser end-to-end check.
 
 Next: combat and fog of war (C), AI opponent plus self-play harness (D), lobby
 and teams (E).

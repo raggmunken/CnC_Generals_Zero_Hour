@@ -93,6 +93,9 @@ export interface Economy {
   powerConsumed: number;
 }
 
+/** What a harvester is currently doing. */
+export type HarvestState = "seeking" | "gathering" | "returning" | "unloading";
+
 export interface Unit {
   id: number;
   owner: number;
@@ -103,6 +106,28 @@ export interface Unit {
   /** Current move destination, or null when idle. */
   targetX: number | null;
   targetY: number | null;
+  /** Supplies aboard, harvesters only. */
+  carrying?: number;
+  /** Harvester job state. Absent on everything else. */
+  harvest?: HarvestState;
+  /** Supply node being worked, harvesters only. */
+  nodeId?: number;
+  /**
+   * True while the unit is under automatic control.
+   *
+   * A direct move order clears it, so telling a harvester to go somewhere
+   * actually keeps it there instead of it immediately wandering back to work.
+   */
+  auto?: boolean;
+}
+
+/** A supply deposit on the map. */
+export interface SupplyNode {
+  id: number;
+  x: number;
+  y: number;
+  /** Remaining supplies. Depletes as harvesters work it. */
+  amount: number;
 }
 
 export interface PlayerState {

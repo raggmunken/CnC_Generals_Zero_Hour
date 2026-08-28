@@ -9,8 +9,12 @@
 import {
   BUILDINGS,
   buildingDef,
+  HARVEST_CAPACITY,
+  HARVEST_RATE,
+  HARVEST_REACH,
   LOW_POWER_SPEED,
   STARTING_CREDITS,
+  UNLOAD_RATE,
   unitDef,
 } from "../shared/content.js";
 import {
@@ -21,6 +25,7 @@ import {
   type Economy,
   type MapData,
   type PlayerState,
+  type SupplyNode,
   type Unit,
 } from "../shared/types.js";
 
@@ -37,6 +42,7 @@ export class Sim {
   readonly units = new Map<number, Unit>();
   readonly buildings = new Map<number, Building>();
   readonly economies = new Map<number, Economy>();
+  readonly supplyNodes = new Map<number, SupplyNode>();
   tick = 0;
 
   private nextUnitId = 1;
@@ -64,6 +70,11 @@ export class Sim {
     return e;
   }
 
+  setSupplyNodes(nodes: SupplyNode[]): void {
+    this.supplyNodes.clear();
+    for (const n of nodes) this.supplyNodes.set(n.id, n);
+  }
+
   spawnUnit(owner: number, type: string, x: number, y: number): Unit {
     const def = unitDef(type);
     const unit: Unit = {
@@ -76,6 +87,13 @@ export class Sim {
       targetX: null,
       targetY: null,
     };
+    // Harvesters go to work on their own. Requiring the player to babysit
+    // every one of them is busywork, not strategy.
+    if (type === "harvester") {
+      unit.carrying = 0;
+      unit.harvest = "seeking";
+      unit.auto = true;
+    }
     this.units.set(unit.id, unit);
     return unit;
   }
@@ -104,6 +122,9 @@ export class Sim {
       if (!u || u.owner !== playerId) continue;
       u.targetX = x;
       u.targetY = y;
+      // A direct order takes a harvester off automatic, so it stays where it
+      // was sent instead of immediately wandering back to the nearest pile.
+      u.auto = false;
     }
   }
 
@@ -253,7 +274,113 @@ export class Sim {
       }
     }
 
-    for (const u of this.units.values()) this.moveUnit(u);
+    for (const u of this.units.values()) {
+      if (u.auto && u.harvest) this.runHarvester(u);
+      this.moveUnit(u);
+    }
+  }
+
+  /** Nearest supply node with anything left in it. */
+  private nearestNode(x: number, y: number): SupplyNode | null {
+    let best: SupplyNode | null = null;
+    let bestD = Infinity;
+    for (const n of this.supplyNodes.values()) {
+      if (n.amount <= 0) continue;
+      const d = Math.hypot(n.x - x, n.y - y);
+      if (d < bestD) { bestD = d; best = n; }
+    }
+    return best;
+  }
+
+  /** Nearest completed supply centre belonging to this player. */
+  private nearestDropOff(owner: number, x: number, y: number): Building | null {
+    let best: Building | null = null;
+    let bestD = Infinity;
+    for (const b of this.buildings.values()) {
+      if (b.owner !== owner || b.type !== "supply_center" || b.buildRemaining > 0) continue;
+      const size = buildingDef(b.type).size;
+      const d = Math.hypot(b.x + size / 2 - x, b.y + size / 2 - y);
+      if (d < bestD) { bestD = d; best = b; }
+    }
+    return best;
+  }
+
+  /**
+   * Drive one harvester through gather -> return -> unload.
+   *
+   * Runs before movement each tick, so the state it sets is acted on in the
+   * same step rather than a tick late.
+   */
+  private runHarvester(u: Unit): void {
+    const carrying = u.carrying ?? 0;
+
+    switch (u.harvest) {
+      case "seeking": {
+        const node = this.nodeFor(u);
+        if (!node) { u.targetX = null; u.targetY = null; return; }
+        u.nodeId = node.id;
+        if (Math.hypot(node.x - u.x, node.y - u.y) <= HARVEST_REACH) {
+          u.harvest = "gathering";
+          u.targetX = null;
+          u.targetY = null;
+        } else {
+          u.targetX = node.x;
+          u.targetY = node.y;
+        }
+        return;
+      }
+
+      case "gathering": {
+        const node = u.nodeId === undefined ? null : this.supplyNodes.get(u.nodeId) ?? null;
+        if (!node || node.amount <= 0) {
+          u.harvest = carrying > 0 ? "returning" : "seeking";
+          u.nodeId = undefined;
+          return;
+        }
+        const take = Math.min(HARVEST_RATE * DT, HARVEST_CAPACITY - carrying, node.amount);
+        node.amount -= take;
+        u.carrying = carrying + take;
+        if ((u.carrying ?? 0) >= HARVEST_CAPACITY) u.harvest = "returning";
+        return;
+      }
+
+      case "returning": {
+        const drop = this.nearestDropOff(u.owner, u.x, u.y);
+        if (!drop) return; // No supply centre yet: wait rather than dump cargo.
+        const size = buildingDef(drop.type).size;
+        const dx = drop.x + size / 2;
+        const dy = drop.y + size / 2;
+        if (Math.hypot(dx - u.x, dy - u.y) <= HARVEST_REACH + size / 2) {
+          u.harvest = "unloading";
+          u.targetX = null;
+          u.targetY = null;
+        } else {
+          u.targetX = dx;
+          u.targetY = dy;
+        }
+        return;
+      }
+
+      case "unloading": {
+        const give = Math.min(UNLOAD_RATE * DT, carrying);
+        u.carrying = carrying - give;
+        this.economy(u.owner).credits += Math.round(give);
+        if ((u.carrying ?? 0) <= 0.001) {
+          u.carrying = 0;
+          u.harvest = "seeking";
+        }
+        return;
+      }
+    }
+  }
+
+  /** The node a harvester should work: its current one, else the nearest. */
+  private nodeFor(u: Unit): SupplyNode | null {
+    if (u.nodeId !== undefined) {
+      const n = this.supplyNodes.get(u.nodeId);
+      if (n && n.amount > 0) return n;
+    }
+    return this.nearestNode(u.x, u.y);
   }
 
   /**
@@ -312,5 +439,9 @@ export class Sim {
 
   snapshotBuildings(): Building[] {
     return [...this.buildings.values()];
+  }
+
+  snapshotSupply(): SupplyNode[] {
+    return [...this.supplyNodes.values()];
   }
 }

@@ -26,6 +26,7 @@ export class Renderer {
   readonly world = new Container();
 
   private terrainLayer = new Graphics();
+  private supplyLayer = new Graphics();
   private buildingLayer = new Graphics();
   private unitLayer = new Graphics();
   private overlay = new Graphics();
@@ -43,7 +44,7 @@ export class Renderer {
     document.body.appendChild(this.app.canvas);
 
     // Buildings sit under units so infantry standing on a base stay visible.
-    this.world.addChild(this.terrainLayer, this.buildingLayer, this.unitLayer);
+    this.world.addChild(this.terrainLayer, this.supplyLayer, this.buildingLayer, this.unitLayer);
     this.app.stage.addChild(this.world, this.overlay);
   }
 
@@ -77,6 +78,21 @@ export class Renderer {
   applyCamera(): void {
     this.world.scale.set(this.tilePx);
     this.world.position.set(-this.camX * this.tilePx, -this.camY * this.tilePx);
+  }
+
+  /**
+   * Supply piles. Radius tracks how much is left, so a worked-out pile visibly
+   * shrinks and the map reads its own economy without a UI overlay.
+   */
+  drawSupply(nodes: Array<{ x: number; y: number; amount: number; max: number }>): void {
+    const g = this.supplyLayer;
+    g.clear();
+    for (const n of nodes) {
+      if (n.amount <= 0) continue;
+      const frac = Math.max(0.18, Math.min(1, n.amount / n.max));
+      g.circle(n.x, n.y, 1.5 * frac + 0.4).fill(0xc9a227);
+      g.circle(n.x, n.y, 1.5 * frac + 0.4).stroke({ color: 0x7d6416, width: 0.08 });
+    }
   }
 
   drawBuildings(

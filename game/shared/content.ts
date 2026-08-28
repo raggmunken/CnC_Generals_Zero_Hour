@@ -131,6 +131,15 @@ export function buildingDef(type: string): BuildingTypeDef {
   return d;
 }
 
+/** How much a harvester carries per trip. */
+export const HARVEST_CAPACITY = 300;
+/** Supplies gathered per second while parked on a node. */
+export const HARVEST_RATE = 120;
+/** Supplies unloaded per second at a supply centre. */
+export const UNLOAD_RATE = 300;
+/** How close a harvester must be to a node or centre to work it. */
+export const HARVEST_REACH = 1.4;
+
 /** Starting credits. Enough for a supply centre and a little slack. */
 export const STARTING_CREDITS = 5000;
 

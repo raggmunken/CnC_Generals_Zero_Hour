@@ -10,7 +10,7 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, type WebSocket } from "ws";
 
-import { generateMap, startPositions } from "./mapgen.js";
+import { generateMap, generateSupplyNodes, startPositions } from "./mapgen.js";
 import { Sim, TICK_RATE } from "./sim.js";
 import type { ClientMsg, ServerMsg } from "../shared/protocol.js";
 import type { FactionId } from "../shared/types.js";
@@ -29,6 +29,7 @@ const MIME: Record<string, string> = {
 
 const map = generateMap();
 const sim = new Sim(map);
+sim.setSupplyNodes(generateSupplyNodes(map));
 const starts = startPositions(map);
 
 /** Sockets by player id, so a disconnect frees its slot. */
@@ -77,7 +78,17 @@ const httpServer = createServer(async (req, res) => {
 const wss = new WebSocketServer({ server: httpServer, path: "/ws" });
 
 wss.on("connection", (ws) => {
-  const playerId = nextPlayerId++;
+  // Refuse rather than overlap: a player without a start position spawns on
+  // top of someone else's base and silently gets no command centre.
+  if (clients.size >= starts.length) {
+    ws.close(1013, "match full");
+    return;
+  }
+
+  // Reuse the lowest free slot so leavers free their start position.
+  let playerId = 0;
+  while (clients.has(playerId)) playerId++;
+  nextPlayerId = Math.max(nextPlayerId, playerId + 1);
   const start = starts[playerId % starts.length]!;
   const faction = FACTIONS[playerId % FACTIONS.length]!;
 
@@ -91,7 +102,11 @@ wss.on("connection", (ws) => {
   // Start as Generals does: a command centre already standing, a dozer to
   // expand with, and a token escort. Everything else is earned.
   const cc = sim.placeBuilding(playerId, "command_center", Math.floor(start.x) - 1, Math.floor(start.y) - 1);
-  if (cc) cc.buildRemaining = 0; // the starting base is not under construction
+  if (cc) {
+    cc.buildRemaining = 0; // the starting base is not under construction
+  } else {
+    console.warn(`player ${playerId}: command centre could not be placed at its start`);
+  }
   sim.spawnUnit(playerId, "dozer", start.x + 2.5, start.y + 2.5);
   for (let i = 0; i < 2; i++) {
     sim.spawnUnit(playerId, "infantry", start.x + 3 + i * 0.9, start.y + 4);
@@ -137,8 +152,9 @@ setInterval(() => {
   // only ever sees their own credits and power.
   const units = sim.snapshotUnits();
   const buildings = sim.snapshotBuildings();
+  const supply = sim.snapshotSupply();
   for (const [id, ws] of clients) {
-    send(ws, { t: "snap", tick: sim.tick, units, buildings, economy: sim.economy(id) });
+    send(ws, { t: "snap", tick: sim.tick, units, buildings, supply, economy: sim.economy(id) });
   }
 }, 1000 / TICK_RATE);
 

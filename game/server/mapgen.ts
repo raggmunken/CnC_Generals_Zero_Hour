@@ -5,7 +5,7 @@
  * space, not an editor. Deterministic from a seed so a match can be reproduced
  * exactly, which matters once self-play starts comparing AI runs.
  */
-import { Terrain, type MapData } from "../shared/types.js";
+import { Terrain, type MapData, type SupplyNode } from "../shared/types.js";
 
 /** Small deterministic PRNG (mulberry32). Seeded runs must be reproducible. */
 function rng(seed: number): () => number {
@@ -52,10 +52,12 @@ export function generateMap(width = 64, height = 64, seed = 1): MapData {
     }
   }
 
-  // Keep the two start corners clear so nobody spawns inside a rock.
+  // Keep every start corner clear so nobody spawns inside a rock.
   for (const [sx, sy] of [
     [4, 4],
     [width - 5, height - 5],
+    [width - 5, 4],
+    [4, height - 5],
   ] as const) {
     for (let y = sy - 3; y <= sy + 3; y++) {
       for (let x = sx - 3; x <= sx + 3; x++) set(x, y, Terrain.Ground);
@@ -65,10 +67,46 @@ export function generateMap(width = 64, height = 64, seed = 1): MapData {
   return { width, height, tiles };
 }
 
-/** Canonical start positions, matching the cleared corners above. */
+/**
+ * Supply deposits: one pair near each start so both players have a safe
+ * opening income, plus contested piles in the middle worth fighting over.
+ * That shape is what gives an RTS map its early game and its mid game.
+ */
+export function generateSupplyNodes(map: MapData): SupplyNode[] {
+  const nodes: SupplyNode[] = [];
+  let id = 1;
+  const add = (x: number, y: number, amount: number) => nodes.push({ id: id++, x, y, amount });
+
+  const w = map.width;
+  const h = map.height;
+
+  // Safe income beside each base.
+  add(9.5, 4.5, 6000);
+  add(4.5, 9.5, 6000);
+  add(w - 9.5, h - 4.5, 6000);
+  add(w - 4.5, h - 9.5, 6000);
+
+  // Contested centre.
+  add(w / 2, h / 2, 10000);
+  add(w / 2 - 6, h / 2 + 6, 8000);
+  add(w / 2 + 6, h / 2 - 6, 8000);
+
+  return nodes;
+}
+
+/**
+ * Canonical start positions, matching the cleared corners above.
+ *
+ * Four of them, and the server refuses players beyond this count: with fewer
+ * starts than players, a late joiner spawns on top of an existing base, their
+ * command centre fails to place, and their entire tech tree stays silently
+ * locked.
+ */
 export function startPositions(map: MapData): Array<{ x: number; y: number }> {
   return [
     { x: 4.5, y: 4.5 },
     { x: map.width - 4.5, y: map.height - 4.5 },
+    { x: map.width - 4.5, y: 4.5 },
+    { x: 4.5, y: map.height - 4.5 },
   ];
 }

@@ -5,7 +5,7 @@
  * there being exactly one authority and removes any prediction/reconciliation
  * layer to keep in sync.
  */
-import type { Building, Economy, PlayerState, Unit } from "./types.js";
+import type { Building, Economy, PlayerState, SupplyNode, Unit } from "./types.js";
 
 /** Server -> client, once on connect. */
 export interface WelcomeMsg {
@@ -22,6 +22,7 @@ export interface SnapshotMsg {
   tick: number;
   units: Unit[];
   buildings: Building[];
+  supply: SupplyNode[];
   /** The receiving player's own economy only. */
   economy: Economy;
 }
