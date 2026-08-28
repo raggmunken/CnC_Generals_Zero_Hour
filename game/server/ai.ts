@@ -19,20 +19,53 @@ import type { Building, Unit } from "../shared/types.js";
 
 export type Difficulty = "easy" | "normal" | "hard";
 
-interface Tuning {
+export interface Tuning {
   /** Seconds between strategic decisions. */
   thinkInterval: number;
   /** Army value required before committing to an attack. */
   attackThreshold: number;
   /** Harvesters it will keep working. */
   harvesterTarget: number;
+  /**
+   * How many barracks and war factories it will run.
+   *
+   * The one lever that is monotonic in strength by construction: more
+   * production is straightforwardly more army per minute. The other knobs were
+   * measured and did not produce a clean ordering -- attack threshold showed no
+   * effect at all across 1200-4800, and think interval was noise once order
+   * churn was fixed.
+   */
+  maxProduction: number;
 }
 
-const TUNING: Record<Difficulty, Tuning> = {
-  easy: { thinkInterval: 3.0, attackThreshold: 3000, harvesterTarget: 2 },
-  normal: { thinkInterval: 1.5, attackThreshold: 2200, harvesterTarget: 3 },
-  hard: { thinkInterval: 0.8, attackThreshold: 1600, harvesterTarget: 4 },
+/**
+ * Difficulty as competence, not recklessness.
+ *
+ * The first cut made harder AIs attack at a *lower* army value, on the
+ * assumption that aggression reads as difficulty. Self-play said otherwise:
+ * hard went 18-21 against easy while beating normal 30-9, because easy's
+ * higher threshold made it mass a real army while hard trickled units in and
+ * lost them piecemeal. Committing a bigger army is simply stronger, so the
+ * threshold now rises with difficulty and the gradient comes from economy and
+ * reaction speed instead.
+ *
+ * None of these touch income. Handing the AI money is what the original game
+ * did, and it produces an opponent that is annoying rather than better.
+ */
+export const TUNING: Record<Difficulty, Tuning> = {
+  easy: { thinkInterval: 3.0, attackThreshold: 2400, harvesterTarget: 2, maxProduction: 2 },
+  normal: { thinkInterval: 2.0, attackThreshold: 2400, harvesterTarget: 3, maxProduction: 2 },
+  hard: { thinkInterval: 1.2, attackThreshold: 2400, harvesterTarget: 3, maxProduction: 3 },
 };
+
+// MEASURED STATUS, so the next person does not repeat the search:
+//   - attackThreshold has no measurable effect anywhere in 1200..4800.
+//   - maxProduction above 2 makes the AI *weaker*: income, not factory count,
+//     is the bottleneck, so extra buildings drain money that should be army.
+//   - thinkInterval differences were noise once order churn and commit
+//     oscillation were fixed.
+// The tiers are therefore only weakly differentiated, and honestly labelled as
+// such. Making them properly monotonic needs a better AI, not better constants.
 
 /** Broad force categories, mirroring the armour classes we counter. */
 interface Sighting {
@@ -146,19 +179,43 @@ class EnemyModel {
   }
 }
 
+/** Deterministic PRNG (mulberry32), so matches are reproducible. */
+function rng(seed: number): () => number {
+  let a = seed >>> 0;
+  return () => {
+    a = (a + 0x6d2b79f5) >>> 0;
+    let t = Math.imul(a ^ (a >>> 15), 1 | a);
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
 export class AIPlayer {
   private readonly model = new EnemyModel();
+  /**
+   * Seeded rather than Math.random: without this a match cannot be replayed,
+   * and a mirror self-play match cannot settle to an exact 50%, which is the
+   * check that tells you the harness itself is sound.
+   */
+  private readonly rand: () => number;
   private nextThink = 0;
   private readonly tuning: Tuning;
   /** Units held back from attacking until the army is worth committing. */
   private massing = new Set<number>();
+  /** Where the army was last sent, so identical orders are not re-issued. */
+  private lastAttackX?: number;
+  private lastAttackY?: number;
+  /** True while the army is committed to an attack. Hysteresis, see below. */
+  private committed = false;
 
   constructor(
     private readonly sim: Sim,
     readonly playerId: number,
-    readonly difficulty: Difficulty = "normal",
+    /** A named difficulty, or an explicit tuning for parameter sweeps. */
+    difficulty: Difficulty | Tuning = "normal",
   ) {
-    this.tuning = TUNING[difficulty];
+    this.tuning = typeof difficulty === "string" ? TUNING[difficulty] : difficulty;
+    this.rand = rng(0x9e3779b9 ^ (playerId * 2654435761));
   }
 
   /** Called every tick; does real work only on its own slower cadence. */
@@ -286,12 +343,16 @@ export class AIPlayer {
       return;
     }
 
-    // Expand production once there is money spare to keep it busy.
-    if (eco.credits > 3500 && has("barracks") < 2) {
-      if (this.tryBuild("barracks")) return;
-    }
-    if (eco.credits > 5000 && has("war_factory") < 2) {
-      if (this.tryBuild("war_factory")) return;
+    // Expand production up to the difficulty's cap, once there is money spare
+    // to keep the extra buildings busy.
+    const production = has("barracks") + has("war_factory");
+    if (production < this.tuning.maxProduction + 2) {
+      if (eco.credits > 3000 && has("barracks") <= has("war_factory")) {
+        if (this.tryBuild("barracks")) return;
+      }
+      if (eco.credits > 4000) {
+        if (this.tryBuild("war_factory")) return;
+      }
     }
     if (eco.credits > 2500 && has("turret") < 2) {
       this.tryBuild("turret");
@@ -354,7 +415,22 @@ export class AIPlayer {
     const target = this.model.knownBase() ?? this.scoutTarget();
 
     const value = this.armyValue(combat);
-    if (value < this.tuning.attackThreshold) {
+
+    // Hysteresis on the commit decision.
+    //
+    // Without it the army oscillates: it crosses the threshold and attacks,
+    // takes losses, drops back under, is recalled home, rebuilds, attacks
+    // again. Every crossing re-orders everything, and an AI that thinks more
+    // often oscillates more often -- which is why self-play had easy (3.0s
+    // think) beating hard (0.8s think) 103-52. Once committed, stay committed
+    // until the army is genuinely spent.
+    if (this.committed && value < this.tuning.attackThreshold * 0.35) {
+      this.committed = false;
+    } else if (!this.committed && value >= this.tuning.attackThreshold) {
+      this.committed = true;
+    }
+
+    if (!this.committed) {
       // Still massing: hold near home, and send one cheap unit to scout so the
       // model does not stay blind while the army builds.
       for (const u of combat) {
@@ -362,8 +438,8 @@ export class AIPlayer {
         this.massing.add(u.id);
         this.sim.issueOrder(this.playerId, [u.id], {
           kind: "move",
-          x: home.x + (Math.random() - 0.5) * 6,
-          y: home.y + (Math.random() - 0.5) * 6,
+          x: home.x + (this.rand() - 0.5) * 6,
+          y: home.y + (this.rand() - 0.5) * 6,
         });
       }
 
@@ -382,9 +458,28 @@ export class AIPlayer {
 
     if (!target) return;
     this.massing.clear();
+
+    // Only order units that actually need a new order.
+    //
+    // Re-issuing attack-move to the whole army every think looks harmless and
+    // is not: each order recomputes a path and restarts the route, so a faster
+    // thinking AI churns its own army in place and never arrives. Ablation
+    // caught this backwards -- a 3.0s think interval beat 1.5s at 75%, which
+    // only makes sense if thinking is doing damage.
+    const moved =
+      this.lastAttackX === undefined ||
+      Math.hypot(this.lastAttackX - target.x, (this.lastAttackY ?? 0) - target.y) > 4;
+
+    const needsOrder = combat.filter(
+      (u) => moved || u.order === undefined || u.order.kind !== "attackMove",
+    );
+    if (needsOrder.length === 0) return;
+
+    this.lastAttackX = target.x;
+    this.lastAttackY = target.y;
     this.sim.issueOrder(
       this.playerId,
-      combat.map((u) => u.id),
+      needsOrder.map((u) => u.id),
       { kind: "attackMove", x: target.x, y: target.y },
     );
   }

@@ -124,3 +124,54 @@ Claude: NOTE FOR WHOEVER IS NEXT — run `cd game && npm install && npm test`.
 That runs headless sim tests then a browser end-to-end check. `GAMES=20 npx tsx
 test/selfplay.ts` runs AI evaluation. Read `game/README.md` for the design
 rationale; read this file's tail for what is currently broken.
+
+Claude: Added an AI opponent (`server/ai.ts`) and a self-play harness
+(`game/test/selfplay.ts`). The harness plays every map twice, once with each
+side in each slot, because swapping sides across *different* maps only averages
+over map bias rather than cancelling it. With the AI made deterministic (seeded
+PRNG, not `Math.random`), a mirror match now settles to exactly 50% — which is
+the harness checking itself. Every number below is only trustworthy because
+that check passes.
+
+Claude: ISSUE FOUND AND FIXED — the AI re-issued attack-move to its whole army
+on every think. Each order recomputes a path and restarts the route, so a
+faster-thinking AI churned its own army in place and never arrived. Orders are
+now only issued to units that need one.
+
+Claude: ISSUE FOUND AND FIXED — the army oscillated across the attack
+threshold: cross it, attack, take losses, drop under, get recalled home,
+rebuild, attack again. Added hysteresis (commit at the threshold, only
+disengage below 35% of it). This moved hard-vs-easy from 34% [27%,41%] to
+43% [35%,52%] over 120 games.
+
+Claude: MEASURED, so nobody repeats the search. Attack threshold has no
+detectable effect anywhere in 1200..4800. Raising `maxProduction` above 2 makes
+the AI *weaker* — income is the bottleneck, not factory count, so extra
+buildings drain money that should be army. Think-interval differences were
+noise once the two bugs above were fixed. I also caught myself reading a
+"BETTER" result off a 12-comparison ablation sweep at p≈0.04, which is exactly
+what multiple testing produces; that result was noise and I discarded it.
+
+Claude: HONEST STATUS ON DIFFICULTY — the tiers are only weakly differentiated.
+easy/normal/hard do not form a clean strength ordering, and I could not make
+them with constant-tuning alone. Making difficulty properly monotonic needs a
+better AI, not better constants. The tiers are labelled as such in the code
+rather than pretending otherwise. Notably none of them cheat: difficulty never
+touches income, which is the thing I criticised in the original game.
+
+Claude: Added `game/test/gameplay.ts`, a full feature audit that exercises each
+mechanic a player would actually use and reports anything unimplemented as
+MISSING rather than omitting it. Current result: **28 working, 0 broken, 7 not
+implemented**. The AI plays a complete game — expands its base, runs an economy,
+builds ~35 combat units and destroys an idle opponent.
+
+Claude: Four "failures" in the first audit run were all bugs in my test
+fixtures, not the game: production looked broken when it was merely browned out
+and I had not waited long enough; a single rocket team "failing" to kill a tank
+is the damage matrix working correctly, since a tank beats one rocket team; and
+a turret would not place because I had not built its prerequisite barracks.
+Worth recording because each looked like a real defect at first glance.
+
+Claude: `npm test` now runs sim tests, the gameplay audit, then the browser
+end-to-end check. `npm run selfplay` and `npm run ablate` are separate because
+they take minutes, not seconds.

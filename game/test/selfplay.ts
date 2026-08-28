@@ -87,10 +87,14 @@ export function wilson(wins: number, total: number, z = 1.96): [number, number] 
 }
 
 /**
- * Play a matchup both ways round.
+ * Play a matchup as paired games: every map is played twice, once with each
+ * side in each slot.
  *
- * Sides are swapped every other game because start positions are not identical
- * -- without swapping you measure the map, not the AI.
+ * Swapping sides across *different* maps does not cancel map bias, it only
+ * averages over it, which needs far more games to settle. Playing the same
+ * seed both ways cancels it directly -- if one start is stronger, both
+ * contestants get it exactly once. A mirror match on a correct harness should
+ * land on 50% by construction, which makes it a usable self-check.
  */
 export function series(a: Difficulty, b: Difficulty, games: number): {
   aWins: number; bWins: number; draws: number; avgSeconds: number;
@@ -100,19 +104,23 @@ export function series(a: Difficulty, b: Difficulty, games: number): {
   let draws = 0;
   let seconds = 0;
 
-  for (let i = 0; i < games; i++) {
-    const swap = i % 2 === 1;
-    const r = runMatch(swap ? b : a, swap ? a : b, 1000 + i);
-    seconds += r.seconds;
-    if (r.winner === null) draws++;
-    else {
-      const aWon = swap ? r.winner === 1 : r.winner === 0;
-      if (aWon) aWins++;
-      else bWins++;
+  const pairs = Math.max(1, Math.round(games / 2));
+  for (let i = 0; i < pairs; i++) {
+    const seed = 1000 + i;
+    for (const swap of [false, true]) {
+      const r = runMatch(swap ? b : a, swap ? a : b, seed);
+      seconds += r.seconds;
+      if (r.winner === null) {
+        draws++;
+      } else {
+        const aWon = swap ? r.winner === 1 : r.winner === 0;
+        if (aWon) aWins++;
+        else bWins++;
+      }
     }
   }
 
-  return { aWins, bWins, draws, avgSeconds: seconds / games };
+  return { aWins, bWins, draws, avgSeconds: seconds / (pairs * 2) };
 }
 
 function report(label: string, a: Difficulty, b: Difficulty, games: number): void {
@@ -131,6 +139,9 @@ function report(label: string, a: Difficulty, b: Difficulty, games: number): voi
 
 const games = Number(process.env.GAMES ?? 10);
 console.log(`self-play: ${games} games per matchup\n`);
+// A mirror match is the harness checking itself: identical opponents on
+// paired maps must come out near even, or the measurement is broken and
+// nothing below it can be believed.
 report("mirror (normal)", "normal", "normal", games);
 report("hard vs easy", "hard", "easy", games);
 report("hard vs normal", "hard", "normal", games);

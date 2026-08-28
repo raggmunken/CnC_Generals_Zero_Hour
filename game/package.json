@@ -8,7 +8,10 @@
     "build": "tsc --noEmit && vite build",
     "server": "tsx server/index.ts",
     "start": "npm run build && node --import tsx server/index.ts",
-    "test": "tsx test/sim.ts && tsx test/e2e.ts"
+    "test": "tsx test/sim.ts && tsx test/gameplay.ts && tsx test/e2e.ts",
+    "audit": "tsx test/gameplay.ts",
+    "selfplay": "tsx test/selfplay.ts",
+    "ablate": "tsx test/ablate.ts"
   },
   "dependencies": {
     "pixi.js": "^8.6.6",
