@@ -14,8 +14,9 @@ export const BASE_TILE_PX = 24;
 const TERRAIN_COLOR: Record<number, number> = {
   [Terrain.Ground]: 0x3f5133,
   [Terrain.Rough]: 0x59502f,
-  [Terrain.Water]: 0x1e3a4c,
-  [Terrain.Cliff]: 0x2a2724,
+  [Terrain.Water]: 0x24506b,
+  [Terrain.Mountain]: 0x4a4642,
+  [Terrain.Trees]: 0x2b3d22,
 };
 
 /** Player colours: red team, blue team, then spares. */

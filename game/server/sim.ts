@@ -111,7 +111,7 @@ export class Sim {
     const tx = Math.floor(x);
     const ty = Math.floor(y);
     if (tx < 0 || ty < 0 || tx >= this.map.width || ty >= this.map.height) {
-      return Terrain.Cliff;
+      return Terrain.Mountain;
     }
     return this.map.tiles[ty * this.map.width + tx] as Terrain;
   }

@@ -9,7 +9,7 @@ import { HARVEST_CAPACITY, STARTING_CREDITS, UNITS } from "../shared/content.js"
 import { canHarm, damageFor } from "../server/combat.js";
 import { generateMap, generateSupplyNodes } from "../server/mapgen.js";
 import { Sim, TICK_RATE } from "../server/sim.js";
-import { Terrain } from "../shared/types.js";
+import { isPassable, Terrain } from "../shared/types.js";
 
 const failures: string[] = [];
 function check(label: string, ok: boolean, detail = ""): void {
@@ -277,7 +277,60 @@ function run(sim: Sim, seconds: number): void {
       okCount && minGap > map.width * 0.3 && allClear && everyStartHasSupply,
       `size=${map.width} starts=${starts.length} minGap=${minGap.toFixed(1)} clear=${allClear} supply=${everyStartHasSupply}`,
     );
+
+    // Connectivity is the property that decides whether a generated map is
+    // playable at all: rivers, mountains and forests can trivially wall a
+    // start off, and a map you cannot cross is broken rather than hard.
+    const seen = reachable(map, starts[0]!);
+    const idx = (v: { x: number; y: number }) =>
+      Math.floor(v.y) * map.width + Math.floor(v.x);
+    const startsConnected = starts.every((st) => seen[idx(st)] === 1);
+    const nodesReachable = nodes.filter((n) => seen[idx(n)] === 1).length;
+
+    check(
+      `${players}p map: every start is reachable from every other`,
+      startsConnected,
+      `connected=${starts.filter((st) => seen[idx(st)] === 1).length}/${starts.length}`,
+    );
+    check(
+      `${players}p map: most supply is reachable`,
+      nodesReachable >= nodes.length - 1,
+      `${nodesReachable}/${nodes.length} piles reachable`,
+    );
+
+    // The features must actually appear, or the generator silently produces
+    // the same flat field it did before.
+    const kinds = new Set(map.tiles);
+    check(
+      `${players}p map: has water, mountains and forest`,
+      kinds.has(Terrain.Water) && kinds.has(Terrain.Mountain) && kinds.has(Terrain.Trees),
+      `kinds=${[...kinds].sort().join(",")}`,
+    );
   }
+}
+
+/** Flood fill of walkable tiles from a point, for connectivity checks. */
+function reachable(map: { width: number; height: number; tiles: Uint8Array }, from: { x: number; y: number }): Uint8Array {
+  const seen = new Uint8Array(map.tiles.length);
+  const start = Math.floor(from.y) * map.width + Math.floor(from.x);
+  if (!isPassable(map.tiles[start] as Terrain)) return seen;
+  const q = [start];
+  seen[start] = 1;
+  while (q.length > 0) {
+    const at = q.pop()!;
+    const x = at % map.width;
+    const y = (at / map.width) | 0;
+    for (const [dx, dy] of [[1, 0], [-1, 0], [0, 1], [0, -1]] as const) {
+      const nx = x + dx;
+      const ny = y + dy;
+      if (nx < 0 || ny < 0 || nx >= map.width || ny >= map.height) continue;
+      const ni = ny * map.width + nx;
+      if (seen[ni] || !isPassable(map.tiles[ni] as Terrain)) continue;
+      seen[ni] = 1;
+      q.push(ni);
+    }
+  }
+  return seen;
 }
 
 console.log(`\nRESULT: ${failures.length === 0 ? "ALL PASS" : `FAILURES: ${failures.join(", ")}`}`);

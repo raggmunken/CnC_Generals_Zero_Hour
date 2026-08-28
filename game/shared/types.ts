@@ -3,12 +3,23 @@
 /** Faction identity. Generals' three, kept as roles rather than exact rosters. */
 export type FactionId = "usa" | "china" | "gla";
 
-/** Terrain kinds. Kept deliberately small -- more is not more fun. */
+/**
+ * Terrain kinds.
+ *
+ * Each exists to do a distinct job to the map: rough ground slows a push,
+ * trees and mountains wall it off, water splits the map into fronts. Anything
+ * that does not change how a fight moves does not need to be here.
+ */
 export const enum Terrain {
   Ground = 0,
+  /** Passable, slower. Scrub and broken ground. */
   Rough = 1,
+  /** Rivers and ocean. Impassable to ground units. */
   Water = 2,
-  Cliff = 3,
+  /** Impassable rock. Also blocks sight. */
+  Mountain = 3,
+  /** Forest. Impassable, and blocks sight. */
+  Trees = 4,
 }
 
 /** Whether a tile can be walked on at all. */
@@ -19,6 +30,16 @@ export function isPassable(t: Terrain): boolean {
 /** Movement cost multiplier for a tile. Rough ground slows you down. */
 export function terrainCost(t: Terrain): number {
   return t === Terrain.Rough ? 1.6 : 1;
+}
+
+/**
+ * Does this tile stop you seeing past it?
+ *
+ * Water is passable to sight even though it is not to feet, which is what
+ * makes a river a front line rather than a wall.
+ */
+export function blocksVision(t: Terrain): boolean {
+  return t === Terrain.Mountain || t === Terrain.Trees;
 }
 
 export interface MapData {
