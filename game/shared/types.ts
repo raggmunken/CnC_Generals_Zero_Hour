@@ -37,6 +37,60 @@ export interface UnitTypeDef {
   /** Collision/selection radius in world units. */
   radius: number;
   cost: number;
+  /** Seconds to produce at full power. */
+  buildTime: number;
+  /** Building type that trains this unit. */
+  producedBy: string;
+  /** One-line description for the build menu. */
+  role: string;
+}
+
+export interface BuildingTypeDef {
+  id: string;
+  name: string;
+  cost: number;
+  /** Seconds to construct at full power. */
+  buildTime: number;
+  maxHp: number;
+  /** Footprint in tiles, square. */
+  size: number;
+  /** Positive supplies power, negative consumes it. */
+  power: number;
+  /** Building type ids that must already exist before this can be built. */
+  requires: string[];
+  /** Unit type ids this building can train. */
+  produces: string[];
+  description: string;
+}
+
+/** One item being produced at a building. */
+export interface ProductionItem {
+  unitType: string;
+  /** Ticks of work remaining. */
+  remaining: number;
+  /** Ticks the item needs in total, for progress display. */
+  total: number;
+}
+
+export interface Building {
+  id: number;
+  owner: number;
+  type: string;
+  /** Top-left tile of the footprint. */
+  x: number;
+  y: number;
+  hp: number;
+  /** Ticks left until construction completes; 0 means operational. */
+  buildRemaining: number;
+  buildTotal: number;
+  queue: ProductionItem[];
+}
+
+/** Per-player economy, sent to its owner each snapshot. */
+export interface Economy {
+  credits: number;
+  powerProduced: number;
+  powerConsumed: number;
 }
 
 export interface Unit {

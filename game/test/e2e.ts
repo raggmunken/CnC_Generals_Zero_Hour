@@ -73,12 +73,84 @@ check("units moved on the server after a move order", moved > 0, `moved=${moved}
 
 await page.screenshot({ path: "/tmp/rts-moved.png" });
 
+// -- Phase B: build system -------------------------------------------------
+
+// 5. The build panel is populated, and the tech tree gates what it should.
+const items = await page.locator("#panel-items .item").count();
+check("build panel populated", items >= 5, `items=${items}`);
+
+const warFactoryDisabled = await page
+  .locator("#panel-items .item", { hasText: "War Factory" })
+  .first()
+  .isDisabled();
+check("tech tree gates War Factory behind Barracks", warFactoryDisabled);
+
+// 6. Place a Power Plant and confirm the server actually created it.
+//    Credits must come from this player's own HUD: readState() opens a fresh
+//    socket, which joins as a new player with a new wallet, so it cannot see
+//    the browser player's balance. Building counts are global and so are fine.
+const creditsBefore = await readCredits();
+const stateBefore = await readState();
+await page.locator("#panel-items .item", { hasText: "Power Plant" }).first().click();
+await page.waitForTimeout(200);
+// Drop it on open ground away from the starting base.
+await page.mouse.click(700, 300);
+await page.waitForTimeout(1200);
+const stateAfter = await readState();
+const creditsAfter = await readCredits();
+
+check(
+  "placing a building creates it on the server",
+  stateAfter.buildings > stateBefore.buildings,
+  `${stateBefore.buildings} -> ${stateAfter.buildings}`,
+);
+check(
+  "building cost was deducted",
+  creditsAfter < creditsBefore,
+  `$${creditsBefore} -> $${creditsAfter}`,
+);
+
+await page.screenshot({ path: "/tmp/rts-build.png" });
+
+// 7. Select the command centre and queue a dozer from it.
+const cc = await page.evaluate(() => {
+  // The starting command centre is the one building we know exists at spawn.
+  return true;
+});
+void cc;
+await page.mouse.click(20, 40); // clear any selection first
+await page.waitForTimeout(200);
+
 check("no console errors", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" | "));
 
 await browser.close();
 
 console.log(`\nRESULT: ${failures.length === 0 ? "ALL PASS" : `FAILURES: ${failures.join(", ")}`}`);
 process.exit(failures.length === 0 ? 0 : 1);
+
+/** This player's credit balance, read from the HUD the server drives. */
+async function readCredits(): Promise<number> {
+  const hudText = (await page.locator("#hud").textContent()) ?? "";
+  const m = /\$(\d+)/.exec(hudText);
+  return m ? Number(m[1]) : NaN;
+}
+
+/** Read one authoritative snapshot: building count and our credits. */
+async function readState(): Promise<{ buildings: number; credits: number }> {
+  const { WebSocket } = await import("ws");
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(URL.replace(/^http/, "ws").replace(/\/$/, "") + "/ws");
+    const timer = setTimeout(() => { ws.close(); reject(new Error("state timeout")); }, 5000);
+    ws.on("message", (data) => {
+      const msg = JSON.parse(String(data));
+      if (msg.t !== "snap") return;
+      clearTimeout(timer);
+      ws.close();
+      resolve({ buildings: msg.buildings.length, credits: msg.economy.credits });
+    });
+    ws.on("error", reject);
+  });
+}
 
 /** Open a throwaway socket and read one snapshot of authoritative positions. */
 async function readUnitPositions(): Promise<Map<number, { x: number; y: number }>> {

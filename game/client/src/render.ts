@@ -26,6 +26,7 @@ export class Renderer {
   readonly world = new Container();
 
   private terrainLayer = new Graphics();
+  private buildingLayer = new Graphics();
   private unitLayer = new Graphics();
   private overlay = new Graphics();
 
@@ -41,7 +42,8 @@ export class Renderer {
     });
     document.body.appendChild(this.app.canvas);
 
-    this.world.addChild(this.terrainLayer, this.unitLayer);
+    // Buildings sit under units so infantry standing on a base stay visible.
+    this.world.addChild(this.terrainLayer, this.buildingLayer, this.unitLayer);
     this.app.stage.addChild(this.world, this.overlay);
   }
 
@@ -75,6 +77,48 @@ export class Renderer {
   applyCamera(): void {
     this.world.scale.set(this.tilePx);
     this.world.position.set(-this.camX * this.tilePx, -this.camY * this.tilePx);
+  }
+
+  drawBuildings(
+    buildings: Array<{
+      owner: number;
+      x: number;
+      y: number;
+      size: number;
+      progress: number;
+      selected: boolean;
+    }>,
+  ): void {
+    const g = this.buildingLayer;
+    g.clear();
+    for (const b of buildings) {
+      const color = PLAYER_COLOR[b.owner % PLAYER_COLOR.length]!;
+
+      if (b.progress < 1) {
+        // Under construction: outline the footprint and fill from the bottom
+        // up, so progress is readable without a separate progress bar.
+        g.rect(b.x, b.y, b.size, b.size).fill({ color, alpha: 0.18 });
+        const h = b.size * b.progress;
+        g.rect(b.x, b.y + b.size - h, b.size, h).fill({ color, alpha: 0.55 });
+        g.rect(b.x, b.y, b.size, b.size).stroke({ color, width: 0.08, alpha: 0.9 });
+      } else {
+        g.rect(b.x + 0.1, b.y + 0.1, b.size - 0.2, b.size - 0.2).fill(0x2a2724);
+        g.rect(b.x + 0.25, b.y + 0.25, b.size - 0.5, b.size - 0.5).fill(color);
+      }
+
+      if (b.selected) {
+        g.rect(b.x - 0.1, b.y - 0.1, b.size + 0.2, b.size + 0.2).stroke({ color: 0xffffff, width: 0.09 });
+      }
+    }
+  }
+
+  /** Ghost footprint that follows the cursor while placing a building. */
+  drawPlacementGhost(ghost: { x: number; y: number; size: number; ok: boolean } | null): void {
+    if (!ghost) return;
+    const g = this.buildingLayer;
+    const color = ghost.ok ? 0x8ce07a : 0xe07a7a;
+    g.rect(ghost.x, ghost.y, ghost.size, ghost.size).fill({ color, alpha: 0.3 });
+    g.rect(ghost.x, ghost.y, ghost.size, ghost.size).stroke({ color, width: 0.1 });
   }
 
   drawUnits(

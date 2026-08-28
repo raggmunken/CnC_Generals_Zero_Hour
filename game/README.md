@@ -43,10 +43,36 @@ interpolation, which is what makes a 15Hz sim look smooth.
 **Ownership is checked in the sim**, not at the transport layer, so a malformed
 or hostile client cannot move somebody else's army.
 
+## Build system
+
+Shaped like Generals: a command centre unlocks the tree, power is a real
+constraint, infantry and vehicles are split across two production buildings.
+The numbers are ours.
+
+| Building | Cost | Power | Needs | Produces |
+|---|---|---|---|---|
+| Command Center | 2000 | 0 | — | Dozer |
+| Power Plant | 800 | +10 | Command Center | — |
+| Supply Center | 1500 | -2 | Command Center | Harvester |
+| Barracks | 700 | -2 | Command Center | Infantry, Rocket Infantry |
+| War Factory | 2000 | -5 | Barracks | Battle Tank, AA Vehicle |
+| Defense Turret | 900 | -3 | Barracks | — |
+
+Unavailable entries stay visible but disabled with the reason ("needs
+Barracks"). Hiding them would make the tech tree impossible to learn.
+
+Drawing more power than you produce halves production rather than stopping it.
+Generals stops dead, which punishes without teaching; halving makes the mistake
+obvious and still recoverable.
+
+All of it lives in `shared/content.ts` -- balance is a data edit, never a code
+edit.
+
 ## Status
 
-Phase A complete and verified: sim, transport, renderer, selection and movement
-all work end to end in a real browser.
+Phases A and B complete and verified end to end in a real browser: simulation,
+transport, rendering, selection, movement, construction, production queues,
+power and the tech tree.
 
-Next: economy and construction (B), combat and fog of war (C), AI opponent plus
-self-play harness (D), lobby and teams (E).
+Next: combat and fog of war (C), AI opponent plus self-play harness (D), lobby
+and teams (E).

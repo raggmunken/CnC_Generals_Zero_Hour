@@ -5,7 +5,7 @@
  * there being exactly one authority and removes any prediction/reconciliation
  * layer to keep in sync.
  */
-import type { PlayerState, Unit } from "./types.js";
+import type { Building, Economy, PlayerState, Unit } from "./types.js";
 
 /** Server -> client, once on connect. */
 export interface WelcomeMsg {
@@ -21,6 +21,9 @@ export interface SnapshotMsg {
   t: "snap";
   tick: number;
   units: Unit[];
+  buildings: Building[];
+  /** The receiving player's own economy only. */
+  economy: Economy;
 }
 
 /** Client -> server: move the given units to a point. */
@@ -31,5 +34,20 @@ export interface MoveCmd {
   y: number;
 }
 
+/** Client -> server: place a building at a tile. */
+export interface BuildCmd {
+  t: "build";
+  buildingType: string;
+  x: number;
+  y: number;
+}
+
+/** Client -> server: queue a unit at one of our buildings. */
+export interface TrainCmd {
+  t: "train";
+  buildingId: number;
+  unitType: string;
+}
+
 export type ServerMsg = WelcomeMsg | SnapshotMsg;
-export type ClientMsg = MoveCmd;
+export type ClientMsg = MoveCmd | BuildCmd | TrainCmd;

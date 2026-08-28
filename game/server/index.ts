@@ -41,6 +41,7 @@ function send(ws: WebSocket, msg: ServerMsg): void {
   if (ws.readyState === ws.OPEN) ws.send(JSON.stringify(msg));
 }
 
+/** Kept for lobby-wide messages; snapshots are per-player, see the tick loop. */
 function broadcast(msg: ServerMsg): void {
   const raw = JSON.stringify(msg);
   for (const ws of clients.values()) {
@@ -87,11 +88,14 @@ wss.on("connection", (ws) => {
     team: playerId % 2,
   });
 
-  // A small starting force so there is something to command immediately.
-  for (let i = 0; i < 3; i++) {
-    sim.spawnUnit(playerId, "infantry", start.x + i * 0.9, start.y);
+  // Start as Generals does: a command centre already standing, a dozer to
+  // expand with, and a token escort. Everything else is earned.
+  const cc = sim.placeBuilding(playerId, "command_center", Math.floor(start.x) - 1, Math.floor(start.y) - 1);
+  if (cc) cc.buildRemaining = 0; // the starting base is not under construction
+  sim.spawnUnit(playerId, "dozer", start.x + 2.5, start.y + 2.5);
+  for (let i = 0; i < 2; i++) {
+    sim.spawnUnit(playerId, "infantry", start.x + 3 + i * 0.9, start.y + 4);
   }
-  sim.spawnUnit(playerId, "tank", start.x, start.y + 1.6);
 
   clients.set(playerId, ws);
   console.log(`player ${playerId} joined (${faction}); ${clients.size} connected`);
@@ -113,6 +117,10 @@ wss.on("connection", (ws) => {
     }
     if (msg.t === "move" && Array.isArray(msg.unitIds)) {
       sim.issueMove(playerId, msg.unitIds, msg.x, msg.y);
+    } else if (msg.t === "build" && typeof msg.buildingType === "string") {
+      sim.placeBuilding(playerId, msg.buildingType, msg.x, msg.y);
+    } else if (msg.t === "train" && typeof msg.buildingId === "number") {
+      sim.queueUnit(playerId, msg.buildingId, msg.unitType);
     }
   });
 
@@ -124,7 +132,14 @@ wss.on("connection", (ws) => {
 
 setInterval(() => {
   sim.step();
-  broadcast({ t: "snap", tick: sim.tick, units: sim.snapshotUnits() });
+
+  // Snapshots are per-player: units and buildings are public, but a player
+  // only ever sees their own credits and power.
+  const units = sim.snapshotUnits();
+  const buildings = sim.snapshotBuildings();
+  for (const [id, ws] of clients) {
+    send(ws, { t: "snap", tick: sim.tick, units, buildings, economy: sim.economy(id) });
+  }
 }, 1000 / TICK_RATE);
 
 httpServer.listen(PORT, () => {

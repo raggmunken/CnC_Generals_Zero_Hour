@@ -4,9 +4,9 @@
  * The client never simulates. It renders the last two server snapshots with
  * interpolation between them, which is what makes a 15Hz sim look smooth.
  */
-import { unitDef } from "../../shared/content.js";
+import { BUILDINGS, buildingDef, unitDef, UNITS } from "../../shared/content.js";
 import type { ServerMsg } from "../../shared/protocol.js";
-import type { Unit } from "../../shared/types.js";
+import type { Building, Economy, Unit } from "../../shared/types.js";
 import { Net } from "./net.js";
 import { Renderer } from "./render.js";
 
@@ -16,6 +16,8 @@ const EDGE_SCROLL_PX = 24;
 const EDGE_MARGIN = 2;
 
 const hud = document.getElementById("hud")!;
+const panelItems = document.getElementById("panel-items")!;
+const panelTitle = document.getElementById("panel-title")!;
 const renderer = new Renderer();
 await renderer.init();
 
@@ -31,6 +33,14 @@ let prevUnits = new Map<number, Unit>();
 let currUnits = new Map<number, Unit>();
 let prevAt = 0;
 let currAt = 0;
+
+let buildings: Building[] = [];
+let economy: Economy = { credits: 0, powerProduced: 0, powerConsumed: 0 };
+
+/** Building type queued for placement, or null when not placing. */
+let placing: string | null = null;
+/** Our building whose production menu is open, or null. */
+let selectedBuilding: number | null = null;
 
 const selected = new Set<number>();
 const keys = new Set<string>();
@@ -53,7 +63,13 @@ net.onMessage = (msg: ServerMsg) => {
     prevAt = currAt;
     currUnits = new Map(msg.units.map((u) => [u.id, u]));
     currAt = performance.now();
+    buildings = msg.buildings;
+    economy = msg.economy;
     if (!centred) centreOnOwnUnits();
+    if (selectedBuilding !== null && !buildings.some((b) => b.id === selectedBuilding)) {
+      selectedBuilding = null;
+    }
+    renderPanel();
     // Drop selections for units that no longer exist.
     for (const id of [...selected]) if (!currUnits.has(id)) selected.delete(id);
   }
@@ -82,7 +98,15 @@ function centreOnOwnUnits(): void {
 
 addEventListener("keydown", (e) => {
   keys.add(e.code);
-  if (e.code === "Escape") selected.clear();
+  if (e.code === "Escape") {
+    // Escape backs out of the most specific mode first, rather than clearing
+    // everything at once -- otherwise cancelling a placement also drops the
+    // army you had selected.
+    if (placing) placing = null;
+    else if (selectedBuilding !== null) selectedBuilding = null;
+    else selected.clear();
+    renderPanel();
+  }
 });
 addEventListener("keyup", (e) => keys.delete(e.code));
 addEventListener("blur", () => keys.clear());
@@ -98,9 +122,28 @@ canvas.addEventListener("pointerleave", () => { pointer.inside = false; });
 
 canvas.addEventListener("pointerdown", (e) => {
   if (e.button === 0) {
+    if (placing) {
+      const w = renderer.screenToWorld(e.clientX, e.clientY);
+      const size = buildingDef(placing).size;
+      net.send({
+        t: "build",
+        buildingType: placing,
+        x: Math.floor(w.x - size / 2),
+        y: Math.floor(w.y - size / 2),
+      });
+      // Shift keeps the tool active for laying down several in a row.
+      if (!e.shiftKey) placing = null;
+      renderPanel();
+      return;
+    }
     dragStart = { x: e.clientX, y: e.clientY };
     dragNow = { x: e.clientX, y: e.clientY };
   } else if (e.button === 2) {
+    if (placing) {
+      placing = null;
+      renderPanel();
+      return;
+    }
     issueMoveAt(e.clientX, e.clientY);
   }
 });
@@ -113,9 +156,16 @@ canvas.addEventListener("pointerup", (e) => {
     // A click, not a drag: select the unit under the cursor, or move if we
     // already have a selection and clicked empty ground.
     const hit = unitAtScreen(e.clientX, e.clientY);
+    const hitBuilding = buildingAtScreen(e.clientX, e.clientY);
     if (hit) {
       if (!e.shiftKey) selected.clear();
       if (hit.owner === playerId) selected.add(hit.id);
+      selectedBuilding = null;
+      renderPanel();
+    } else if (hitBuilding && hitBuilding.owner === playerId) {
+      selectedBuilding = hitBuilding.id;
+      selected.clear();
+      renderPanel();
     } else if (selected.size > 0) {
       issueMoveAt(e.clientX, e.clientY);
     } else {
@@ -154,6 +204,161 @@ function unitAtScreen(sx: number, sy: number): Unit | null {
     }
   }
   return best;
+}
+
+function buildingAtScreen(sx: number, sy: number): Building | null {
+  const w = renderer.screenToWorld(sx, sy);
+  for (const b of buildings) {
+    const size = buildingDef(b.type).size;
+    if (w.x >= b.x && w.x < b.x + size && w.y >= b.y && w.y < b.y + size) return b;
+  }
+  return null;
+}
+
+/** Last rendered panel signature, so we only rebuild when something changed. */
+let panelSig = "";
+
+/**
+ * Rebuild the right-hand panel.
+ *
+ * Shows the production menu of a selected building, otherwise the build list.
+ * Unavailable entries stay visible but disabled with the reason -- hiding them
+ * makes the tech tree impossible to learn.
+ *
+ * Snapshots arrive 15 times a second, but the panel almost never changes
+ * between them. Rebuilding it every tick detaches every button mid-click,
+ * which loses real clicks and flickers hover state, so the DOM is only
+ * replaced when the rendered content would actually differ. Production
+ * progress is quantised into the signature rather than excluded, so a running
+ * queue updates without churning the panel every frame.
+ */
+function renderPanel(): void {
+  const sig = panelSignature();
+  if (sig === panelSig) return;
+  panelSig = sig;
+
+  panelItems.replaceChildren();
+
+  const completed = new Set(
+    buildings.filter((b) => b.owner === playerId && b.buildRemaining === 0).map((b) => b.type),
+  );
+
+  const sel = selectedBuilding === null ? null : buildings.find((b) => b.id === selectedBuilding);
+
+  if (sel) {
+    const def = buildingDef(sel.type);
+    panelTitle.textContent = def.name.toUpperCase();
+
+    if (def.produces.length === 0) {
+      const p = document.createElement("div");
+      p.className = "item";
+      p.style.cursor = "default";
+      p.textContent = def.description;
+      panelItems.append(p);
+    }
+
+    for (const unitId of def.produces) {
+      const u = UNITS[unitId]!;
+      const afford = economy.credits >= u.cost;
+      panelItems.append(
+        makeItem(u.name, u.cost, afford ? u.role : "not enough credits", !afford, false, () => {
+          net.send({ t: "train", buildingId: sel.id, unitType: unitId });
+        }),
+      );
+    }
+
+    if (sel.queue.length > 0) {
+      const q = document.createElement("div");
+      q.className = "item";
+      q.style.cursor = "default";
+      const head = sel.queue[0]!;
+      const pct = Math.round((1 - head.remaining / head.total) * 100);
+      q.textContent = `${UNITS[head.unitType]?.name ?? head.unitType} ${pct}%` +
+        (sel.queue.length > 1 ? `  (+${sel.queue.length - 1})` : "");
+      panelItems.append(q);
+    }
+
+    panelItems.append(makeBack());
+    return;
+  }
+
+  panelTitle.textContent = "BUILD";
+  for (const id of Object.keys(BUILDINGS)) {
+    const def = BUILDINGS[id]!;
+    const missing = def.requires.filter((r) => !completed.has(r));
+    const afford = economy.credits >= def.cost;
+    const disabled = missing.length > 0 || !afford;
+
+    const why = missing.length > 0
+      ? `needs ${missing.map((m) => BUILDINGS[m]?.name ?? m).join(", ")}`
+      : !afford
+        ? "not enough credits"
+        : `${def.power >= 0 ? "+" : ""}${def.power} power · ${def.description}`;
+
+    panelItems.append(
+      makeItem(def.name, def.cost, why, disabled, placing === id, () => {
+        placing = placing === id ? null : id;
+        renderPanel();
+      }),
+    );
+  }
+}
+
+/** Everything that affects what the panel looks like, as a comparable string. */
+function panelSignature(): string {
+  const completed = buildings
+    .filter((b) => b.owner === playerId && b.buildRemaining === 0)
+    .map((b) => b.type)
+    .sort()
+    .join(",");
+
+  const sel = selectedBuilding === null ? null : buildings.find((b) => b.id === selectedBuilding);
+
+  // Affordability is what flips buttons between enabled and disabled, so it is
+  // the credit-derived part that matters -- not the exact balance, which would
+  // otherwise force a rebuild on every harvester delivery.
+  const affordable = [
+    ...Object.keys(BUILDINGS).map((id) => (economy.credits >= BUILDINGS[id]!.cost ? "1" : "0")),
+    ...Object.keys(UNITS).map((id) => (economy.credits >= UNITS[id]!.cost ? "1" : "0")),
+  ].join("");
+
+  const head = sel?.queue[0];
+  const queue = head
+    ? `${head.unitType}:${Math.round((1 - head.remaining / head.total) * 20)}:${sel!.queue.length}`
+    : "";
+
+  return [placing ?? "", selectedBuilding ?? "", completed, affordable, queue].join("|");
+}
+
+function makeItem(
+  name: string,
+  cost: number,
+  why: string,
+  disabled: boolean,
+  active: boolean,
+  onClick: () => void,
+): HTMLButtonElement {
+  const el = document.createElement("button");
+  el.className = "item" + (active ? " active" : "");
+  el.disabled = disabled;
+  const cs = document.createElement("span");
+  cs.className = "cost";
+  cs.textContent = `$${cost}`;
+  el.append(name, cs);
+  const w = document.createElement("span");
+  w.className = "why";
+  w.textContent = why;
+  el.append(w);
+  el.addEventListener("click", onClick);
+  return el;
+}
+
+function makeBack(): HTMLButtonElement {
+  const el = document.createElement("button");
+  el.className = "item";
+  el.textContent = "\u2190 back";
+  el.addEventListener("click", () => { selectedBuilding = null; renderPanel(); });
+  return el;
 }
 
 function boxSelect(a: { x: number; y: number }, b: { x: number; y: number }): void {
@@ -200,6 +405,25 @@ renderer.app.ticker.add(() => {
       radius: def.radius,
     });
   }
+  renderer.drawBuildings(
+    buildings.map((b) => ({
+      owner: b.owner,
+      x: b.x,
+      y: b.y,
+      size: buildingDef(b.type).size,
+      progress: b.buildTotal === 0 ? 1 : 1 - b.buildRemaining / b.buildTotal,
+      selected: b.id === selectedBuilding,
+    })),
+  );
+
+  if (placing && pointer.inside) {
+    const w = renderer.screenToWorld(pointer.x, pointer.y);
+    const size = buildingDef(placing).size;
+    const gx = Math.floor(w.x - size / 2);
+    const gy = Math.floor(w.y - size / 2);
+    renderer.drawPlacementGhost({ x: gx, y: gy, size, ok: economy.credits >= buildingDef(placing).cost });
+  }
+
   renderer.drawUnits(drawList, selected);
 
   renderer.drawSelectionBox(
@@ -208,9 +432,11 @@ renderer.app.ticker.add(() => {
       : null,
   );
 
+  const lowPower = economy.powerConsumed > economy.powerProduced;
   hud.textContent =
     `${status}  ·  player ${playerId < 0 ? "?" : playerId + 1}  ·  ` +
-    `units ${currUnits.size}  ·  selected ${selected.size}`;
+    `$${economy.credits}  ·  power ${economy.powerProduced - economy.powerConsumed}` +
+    `${lowPower ? " LOW" : ""}  ·  units ${currUnits.size}  ·  selected ${selected.size}`;
 });
 
 function updateCamera(dt: number): void {

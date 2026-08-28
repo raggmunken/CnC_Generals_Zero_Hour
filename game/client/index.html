@@ -23,6 +23,26 @@
         pointer-events: none;
         white-space: pre;
       }
+      #panel {
+        position: fixed; top: 0; right: 0; width: 210px; max-height: 100vh;
+        overflow-y: auto;
+        background: rgba(10, 14, 8, 0.86);
+        border-bottom-left-radius: 6px;
+        padding: 10px;
+      }
+      #panel-title { opacity: 0.6; letter-spacing: 1px; margin-bottom: 8px; }
+      .item {
+        display: block; width: 100%; text-align: left;
+        background: #232b1c; color: #cfe0c3;
+        border: 1px solid #39442e; border-radius: 4px;
+        padding: 6px 8px; margin-bottom: 5px;
+        font: inherit; cursor: pointer;
+      }
+      .item:hover:not(:disabled) { background: #2e3a25; border-color: #5c7049; }
+      .item:disabled { opacity: 0.38; cursor: default; }
+      .item .cost { float: right; opacity: 0.75; }
+      .item .why { display: block; font-size: 11px; opacity: 0.6; margin-top: 2px; }
+      .item.active { border-color: #9fe870; background: #33421f; }
       #hint {
         position: fixed; bottom: 0; left: 0; padding: 8px 12px;
         background: rgba(10, 14, 8, 0.72);
@@ -34,7 +54,11 @@
   </head>
   <body>
     <div id="hud">connecting…</div>
-    <div id="hint">drag: select · right-click / click ground: move · WASD or edge: pan · wheel: zoom</div>
+    <div id="hint">drag: select · right-click: move · WASD or edge: pan · wheel: zoom · Esc: cancel</div>
+    <div id="panel">
+      <div id="panel-title">BUILD</div>
+      <div id="panel-items"></div>
+    </div>
     <script>
       // A blank canvas with a silent console is the worst failure mode there
       // is. Surface anything that escapes -- including a rejected top-level
