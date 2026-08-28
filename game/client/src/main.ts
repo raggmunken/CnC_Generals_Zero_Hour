@@ -6,7 +6,7 @@
  */
 import { BUILDINGS, buildingDef, unitDef, UNITS } from "../../shared/content.js";
 import type { ServerMsg } from "../../shared/protocol.js";
-import type { Building, Economy, SupplyNode, Unit } from "../../shared/types.js";
+import type { Building, Economy, SupplyNode, Tracer, Unit } from "../../shared/types.js";
 import { Net } from "./net.js";
 import { Renderer } from "./render.js";
 
@@ -42,6 +42,19 @@ let economy: Economy = { credits: 0, powerProduced: 0, powerConsumed: 0 };
 
 /** Building type queued for placement, or null when not placing. */
 let placing: string | null = null;
+/** True while the next click issues an attack-move rather than a move. */
+let attackMoveArmed = false;
+let eliminated: number[] = [];
+
+/**
+ * Tracers with the wall-clock time they arrived.
+ *
+ * The sim reports a shot for one 15Hz tick, which is too brief to see. Holding
+ * them client-side for a moment and fading them out turns a blink into a
+ * readable muzzle flash without putting render concerns in the simulation.
+ */
+const liveTracers: Array<Tracer & { at: number }> = [];
+const TRACER_MS = 160;
 /** Our building whose production menu is open, or null. */
 let selectedBuilding: number | null = null;
 
@@ -68,6 +81,9 @@ net.onMessage = (msg: ServerMsg) => {
     currAt = performance.now();
     buildings = msg.buildings;
     supply = msg.supply;
+    eliminated = msg.eliminated;
+    const now = performance.now();
+    for (const t of msg.tracers) liveTracers.push({ ...t, at: now });
     for (const n of supply) {
       supplyMax.set(n.id, Math.max(supplyMax.get(n.id) ?? 0, n.amount));
     }
@@ -105,7 +121,11 @@ function centreOnOwnUnits(): void {
 
 addEventListener("keydown", (e) => {
   keys.add(e.code);
+  // Hold-to-arm rather than a toggle: A then click is the RTS idiom, and a
+  // sticky attack-move mode gets people killed by accident.
+  if (e.code === "KeyA" && !e.repeat && selected.size > 0) attackMoveArmed = true;
   if (e.code === "Escape") {
+    attackMoveArmed = false;
     // Escape backs out of the most specific mode first, rather than clearing
     // everything at once -- otherwise cancelling a placement also drops the
     // army you had selected.
@@ -151,7 +171,31 @@ canvas.addEventListener("pointerdown", (e) => {
       renderPanel();
       return;
     }
-    issueMoveAt(e.clientX, e.clientY);
+
+    // Right-click with a building selected sets its rally point.
+    if (selectedBuilding !== null) {
+      const w = renderer.screenToWorld(e.clientX, e.clientY);
+      net.send({ t: "rally", buildingId: selectedBuilding, x: w.x, y: w.y });
+      return;
+    }
+
+    // Right-click an enemy attacks it; right-click ground moves or attack-moves.
+    const enemyUnit = unitAtScreen(e.clientX, e.clientY);
+    const enemyBuilding = buildingAtScreen(e.clientX, e.clientY);
+    if (enemyUnit && enemyUnit.owner !== playerId && selected.size > 0) {
+      net.send({
+        t: "order", unitIds: [...selected],
+        order: { kind: "attack", targetId: enemyUnit.id, targetKind: "unit" },
+      });
+    } else if (enemyBuilding && enemyBuilding.owner !== playerId && selected.size > 0) {
+      net.send({
+        t: "order", unitIds: [...selected],
+        order: { kind: "attack", targetId: enemyBuilding.id, targetKind: "building" },
+      });
+    } else {
+      issueMoveAt(e.clientX, e.clientY);
+    }
+    attackMoveArmed = false;
   }
 });
 
@@ -383,7 +427,12 @@ function boxSelect(a: { x: number; y: number }, b: { x: number; y: number }): vo
 function issueMoveAt(sx: number, sy: number): void {
   if (selected.size === 0) return;
   const w = renderer.screenToWorld(sx, sy);
-  net.send({ t: "move", unitIds: [...selected], x: w.x, y: w.y });
+  if (attackMoveArmed) {
+    net.send({ t: "order", unitIds: [...selected], order: { kind: "attackMove", x: w.x, y: w.y } });
+    attackMoveArmed = false;
+  } else {
+    net.send({ t: "move", unitIds: [...selected], x: w.x, y: w.y });
+  }
 }
 
 // -- frame loop -------------------------------------------------------------
@@ -413,6 +462,7 @@ renderer.app.ticker.add(() => {
       x: p ? p.x + (u.x - p.x) * alpha : u.x,
       y: p ? p.y + (u.y - p.y) * alpha : u.y,
       radius: def.radius,
+      hpFrac: u.hp / def.maxHp,
     });
   }
   renderer.drawSupply(
@@ -427,6 +477,7 @@ renderer.app.ticker.add(() => {
       size: buildingDef(b.type).size,
       progress: b.buildTotal === 0 ? 1 : 1 - b.buildRemaining / b.buildTotal,
       selected: b.id === selectedBuilding,
+      hpFrac: b.hp / buildingDef(b.type).maxHp,
     })),
   );
 
@@ -440,6 +491,21 @@ renderer.app.ticker.add(() => {
 
   renderer.drawUnits(drawList, selected);
 
+  // Age out tracers, then draw what is left with a linear fade.
+  while (liveTracers.length > 0 && now - liveTracers[0]!.at > TRACER_MS) liveTracers.shift();
+  renderer.drawTracers(
+    liveTracers.map((t) => ({ ...t, alpha: 1 - (now - t.at) / TRACER_MS })),
+  );
+
+  const rallyOf = selectedBuilding === null ? null : buildings.find((b) => b.id === selectedBuilding);
+  if (rallyOf && rallyOf.rallyX !== undefined && rallyOf.rallyY !== undefined) {
+    const size = buildingDef(rallyOf.type).size;
+    renderer.drawRally(
+      { x: rallyOf.x + size / 2, y: rallyOf.y + size / 2 },
+      { x: rallyOf.rallyX, y: rallyOf.rallyY },
+    );
+  }
+
   renderer.drawSelectionBox(
     dragStart && dragNow
       ? { x0: dragStart.x, y0: dragStart.y, x1: dragNow.x, y1: dragNow.y }
@@ -450,7 +516,9 @@ renderer.app.ticker.add(() => {
   hud.textContent =
     `${status}  ·  player ${playerId < 0 ? "?" : playerId + 1}  ·  ` +
     `$${economy.credits}  ·  power ${economy.powerProduced - economy.powerConsumed}` +
-    `${lowPower ? " LOW" : ""}  ·  units ${currUnits.size}  ·  selected ${selected.size}`;
+    `${lowPower ? " LOW" : ""}  ·  units ${currUnits.size}  ·  selected ${selected.size}` +
+    `${attackMoveArmed ? "  ·  ATTACK-MOVE" : ""}` +
+    `${eliminated.includes(playerId) ? "  ·  DEFEATED" : ""}`;
 });
 
 function updateCamera(dt: number): void {

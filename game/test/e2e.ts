@@ -121,6 +121,19 @@ void cc;
 await page.mouse.click(20, 40); // clear any selection first
 await page.waitForTimeout(200);
 
+// 8. Attack-move arms from the keyboard with units selected.
+await page.mouse.move(20, 40);
+await page.mouse.down();
+await page.mouse.move(1260, 700, { steps: 10 });
+await page.mouse.up();
+await page.waitForTimeout(300);
+await page.keyboard.press("KeyA");
+await page.waitForTimeout(300);
+const armedHud = (await page.locator("#hud").textContent()) ?? "";
+check("attack-move arms with A", armedHud.includes("ATTACK-MOVE"), armedHud.trim());
+
+await page.screenshot({ path: "/tmp/rts-combat.png" });
+
 check("no console errors", consoleErrors.length === 0, consoleErrors.slice(0, 2).join(" | "));
 
 await browser.close();

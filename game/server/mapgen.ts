@@ -1,10 +1,11 @@
 /**
  * Map generation.
  *
- * A hand-tuned generator rather than a file format: Phase A needs a playable
+ * A generator rather than a file format: what a match needs is a fair playable
  * space, not an editor. Deterministic from a seed so a match can be reproduced
  * exactly, which matters once self-play starts comparing AI runs.
  */
+import { mapPreset } from "../shared/content.js";
 import { Terrain, type MapData, type SupplyNode } from "../shared/types.js";
 
 /** Small deterministic PRNG (mulberry32). Seeded runs must be reproducible. */
@@ -18,20 +19,68 @@ function rng(seed: number): () => number {
   };
 }
 
-export function generateMap(width = 64, height = 64, seed = 1): MapData {
+export interface Vec2 {
+  x: number;
+  y: number;
+}
+
+/**
+ * Start positions evenly spaced around a circle.
+ *
+ * Hardcoded corners do not generalise: with fewer starts than players, a late
+ * joiner spawns on top of an existing base, their command centre fails to
+ * place, and their whole tech tree stays silently locked. Even angles are
+ * symmetric by construction for any player count.
+ */
+export function startPositions(size: number, players: number): Vec2[] {
+  const cx = size / 2;
+  const cy = size / 2;
+  const radius = size * 0.36;
+  const out: Vec2[] = [];
+  for (let i = 0; i < players; i++) {
+    // Start at the top and go clockwise, so a duel is top-versus-bottom.
+    const angle = -Math.PI / 2 + (2 * Math.PI * i) / players;
+    out.push({
+      x: Math.round(cx + Math.cos(angle) * radius) + 0.5,
+      y: Math.round(cy + Math.sin(angle) * radius) + 0.5,
+    });
+  }
+  return out;
+}
+
+/** Clear a square of ground so nothing spawns inside a rock. */
+function clearArea(tiles: Uint8Array, size: number, cx: number, cy: number, r: number): void {
+  for (let y = Math.floor(cy - r); y <= Math.ceil(cy + r); y++) {
+    for (let x = Math.floor(cx - r); x <= Math.ceil(cx + r); x++) {
+      if (x < 0 || y < 0 || x >= size || y >= size) continue;
+      tiles[y * size + x] = Terrain.Ground;
+    }
+  }
+}
+
+/**
+ * Build a map sized for the given player count, along with its start
+ * positions. The two are returned together because clearing the start areas
+ * depends on knowing where they are.
+ */
+export function generateMap(players = 2, seed = 1): { map: MapData; starts: Vec2[] } {
+  const preset = mapPreset(players);
+  const size = preset.size;
   const rand = rng(seed);
-  const tiles = new Uint8Array(width * height);
+  const tiles = new Uint8Array(size * size);
   tiles.fill(Terrain.Ground);
 
   const set = (x: number, y: number, t: Terrain) => {
-    if (x < 0 || y < 0 || x >= width || y >= height) return;
-    tiles[y * width + x] = t;
+    if (x < 0 || y < 0 || x >= size || y >= size) return;
+    tiles[y * size + x] = t;
   };
 
-  // A few rough-ground patches to give movement some texture.
-  for (let i = 0; i < 14; i++) {
-    const cx = Math.floor(rand() * width);
-    const cy = Math.floor(rand() * height);
+  // Rough-ground patches, to give movement some texture. Count scales with
+  // area so a larger map is not proportionally emptier.
+  const patches = Math.round((size * size) / 300);
+  for (let i = 0; i < patches; i++) {
+    const cx = Math.floor(rand() * size);
+    const cy = Math.floor(rand() * size);
     const r = 2 + Math.floor(rand() * 4);
     for (let y = cy - r; y <= cy + r; y++) {
       for (let x = cx - r; x <= cx + r; x++) {
@@ -40,11 +89,11 @@ export function generateMap(width = 64, height = 64, seed = 1): MapData {
     }
   }
 
-  // Cliffs as obstacles to path around. Kept away from the map edges and the
-  // centre band so the two start areas stay connected.
-  for (let i = 0; i < 10; i++) {
-    const cx = 8 + Math.floor(rand() * (width - 16));
-    const cy = 8 + Math.floor(rand() * (height - 16));
+  // Cliffs as obstacles to path around, kept off the map edges.
+  const cliffs = Math.round((size * size) / 420);
+  for (let i = 0; i < cliffs; i++) {
+    const cx = 8 + Math.floor(rand() * (size - 16));
+    const cy = 8 + Math.floor(rand() * (size - 16));
     const len = 3 + Math.floor(rand() * 6);
     const horizontal = rand() < 0.5;
     for (let j = 0; j < len; j++) {
@@ -52,61 +101,45 @@ export function generateMap(width = 64, height = 64, seed = 1): MapData {
     }
   }
 
-  // Keep every start corner clear so nobody spawns inside a rock.
-  for (const [sx, sy] of [
-    [4, 4],
-    [width - 5, height - 5],
-    [width - 5, 4],
-    [4, height - 5],
-  ] as const) {
-    for (let y = sy - 3; y <= sy + 3; y++) {
-      for (let x = sx - 3; x <= sx + 3; x++) set(x, y, Terrain.Ground);
-    }
-  }
+  const starts = startPositions(size, preset.players);
+  for (const s of starts) clearArea(tiles, size, s.x, s.y, 5);
 
-  return { width, height, tiles };
+  return { map: { width: size, height: size, tiles }, starts };
 }
 
 /**
- * Supply deposits: one pair near each start so both players have a safe
- * opening income, plus contested piles in the middle worth fighting over.
- * That shape is what gives an RTS map its early game and its mid game.
+ * Supply deposits: two beside each start so every player has a safe opening
+ * income, plus a contested centre cluster worth fighting over. That shape is
+ * what gives a map an early game and a mid game.
  */
-export function generateSupplyNodes(map: MapData): SupplyNode[] {
+export function generateSupplyNodes(map: MapData, starts: Vec2[]): SupplyNode[] {
   const nodes: SupplyNode[] = [];
   let id = 1;
-  const add = (x: number, y: number, amount: number) => nodes.push({ id: id++, x, y, amount });
+  const add = (x: number, y: number, amount: number) =>
+    nodes.push({ id: id++, x, y, amount });
 
-  const w = map.width;
-  const h = map.height;
+  const cx = map.width / 2;
+  const cy = map.height / 2;
 
-  // Safe income beside each base.
-  add(9.5, 4.5, 6000);
-  add(4.5, 9.5, 6000);
-  add(w - 9.5, h - 4.5, 6000);
-  add(w - 4.5, h - 9.5, 6000);
+  for (const s of starts) {
+    // Offset the safe piles perpendicular to the line toward the centre, so
+    // they sit beside the base rather than in front of or behind it.
+    const dx = cx - s.x;
+    const dy = cy - s.y;
+    const len = Math.hypot(dx, dy) || 1;
+    const px = -dy / len;
+    const py = dx / len;
+    add(s.x + px * 6, s.y + py * 6, 6000);
+    add(s.x - px * 6, s.y - py * 6, 6000);
+  }
 
-  // Contested centre.
-  add(w / 2, h / 2, 10000);
-  add(w / 2 - 6, h / 2 + 6, 8000);
-  add(w / 2 + 6, h / 2 - 6, 8000);
+  // Contested centre, scaled so more players means more to fight over.
+  add(cx, cy, 10000);
+  const ring = Math.max(2, starts.length);
+  for (let i = 0; i < ring; i++) {
+    const angle = (2 * Math.PI * i) / ring + Math.PI / ring;
+    add(cx + Math.cos(angle) * map.width * 0.12, cy + Math.sin(angle) * map.height * 0.12, 8000);
+  }
 
   return nodes;
-}
-
-/**
- * Canonical start positions, matching the cleared corners above.
- *
- * Four of them, and the server refuses players beyond this count: with fewer
- * starts than players, a late joiner spawns on top of an existing base, their
- * command centre fails to place, and their entire tech tree stays silently
- * locked.
- */
-export function startPositions(map: MapData): Array<{ x: number; y: number }> {
-  return [
-    { x: 4.5, y: 4.5 },
-    { x: map.width - 4.5, y: map.height - 4.5 },
-    { x: map.width - 4.5, y: 4.5 },
-    { x: 4.5, y: map.height - 4.5 },
-  ];
 }

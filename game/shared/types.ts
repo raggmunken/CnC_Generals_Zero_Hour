@@ -28,6 +28,33 @@ export interface MapData {
   tiles: Uint8Array;
 }
 
+/** What a weapon deals. Paired with ArmourType through the damage matrix. */
+export type DamageType = "gun" | "cannon" | "rocket" | "flak" | "explosive";
+
+/** What a target is made of. */
+export type ArmourType = "infantry" | "light" | "heavy" | "structure" | "air";
+
+export interface WeaponDef {
+  damage: number;
+  damageType: DamageType;
+  /** Maximum engagement distance, world units. */
+  range: number;
+  /** Seconds between shots. */
+  reload: number;
+}
+
+/**
+ * What a unit is currently trying to do.
+ *
+ * Kept separate from targetX/targetY, which stay as the movement output that
+ * moveUnit() consumes. The order resolves into that output each tick, so the
+ * steering and terrain-sliding code is untouched by combat.
+ */
+export type Order =
+  | { kind: "move"; x: number; y: number }
+  | { kind: "attackMove"; x: number; y: number }
+  | { kind: "attack"; targetId: number; targetKind: "unit" | "building" };
+
 export interface UnitTypeDef {
   id: string;
   name: string;
@@ -43,6 +70,11 @@ export interface UnitTypeDef {
   producedBy: string;
   /** One-line description for the build menu. */
   role: string;
+  armour: ArmourType;
+  /** How far this unit can see, and so auto-acquire from. */
+  vision: number;
+  /** Absent means the unit cannot fight (harvesters, dozers). */
+  weapon?: WeaponDef;
 }
 
 export interface BuildingTypeDef {
@@ -61,6 +93,10 @@ export interface BuildingTypeDef {
   /** Unit type ids this building can train. */
   produces: string[];
   description: string;
+  armour: ArmourType;
+  vision: number;
+  /** Present on defensive structures only. */
+  weapon?: WeaponDef;
 }
 
 /** One item being produced at a building. */
@@ -84,6 +120,19 @@ export interface Building {
   buildRemaining: number;
   buildTotal: number;
   queue: ProductionItem[];
+  /** Where produced units are sent. Absent means they stand at the exit. */
+  rallyX?: number;
+  rallyY?: number;
+  /** Ticks until this building's weapon may fire again. */
+  cooldown?: number;
+}
+
+/** A shot fired this tick, for the client to draw. Not simulation state. */
+export interface Tracer {
+  x0: number;
+  y0: number;
+  x1: number;
+  y1: number;
 }
 
 /** Per-player economy, sent to its owner each snapshot. */
@@ -112,6 +161,10 @@ export interface Unit {
   harvest?: HarvestState;
   /** Supply node being worked, harvesters only. */
   nodeId?: number;
+  /** Current intent. Absent means idle. */
+  order?: Order;
+  /** Ticks until this unit may fire again. */
+  cooldown?: number;
   /**
    * True while the unit is under automatic control.
    *

@@ -5,7 +5,7 @@
  * there being exactly one authority and removes any prediction/reconciliation
  * layer to keep in sync.
  */
-import type { Building, Economy, PlayerState, SupplyNode, Unit } from "./types.js";
+import type { Building, Economy, Order, PlayerState, SupplyNode, Tracer, Unit } from "./types.js";
 
 /** Server -> client, once on connect. */
 export interface WelcomeMsg {
@@ -23,6 +23,10 @@ export interface SnapshotMsg {
   units: Unit[];
   buildings: Building[];
   supply: SupplyNode[];
+  /** Shots fired this tick, purely for rendering. */
+  tracers: Tracer[];
+  /** Player ids with nothing left on the field. */
+  eliminated: number[];
   /** The receiving player's own economy only. */
   economy: Economy;
 }
@@ -50,5 +54,20 @@ export interface TrainCmd {
   unitType: string;
 }
 
+/** Client -> server: a full order (attack-move, attack a target). */
+export interface OrderCmd {
+  t: "order";
+  unitIds: number[];
+  order: Order;
+}
+
+/** Client -> server: set a building's rally point. */
+export interface RallyCmd {
+  t: "rally";
+  buildingId: number;
+  x: number;
+  y: number;
+}
+
 export type ServerMsg = WelcomeMsg | SnapshotMsg;
-export type ClientMsg = MoveCmd | BuildCmd | TrainCmd;
+export type ClientMsg = MoveCmd | BuildCmd | TrainCmd | OrderCmd | RallyCmd;

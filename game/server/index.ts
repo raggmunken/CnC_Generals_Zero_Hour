@@ -10,7 +10,8 @@ import { extname, join, normalize } from "node:path";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer, type WebSocket } from "ws";
 
-import { generateMap, generateSupplyNodes, startPositions } from "./mapgen.js";
+import { generateMap, generateSupplyNodes } from "./mapgen.js";
+import { mapPreset } from "../shared/content.js";
 import { Sim, TICK_RATE } from "./sim.js";
 import type { ClientMsg, ServerMsg } from "../shared/protocol.js";
 import type { FactionId } from "../shared/types.js";
@@ -27,10 +28,11 @@ const MIME: Record<string, string> = {
   ".svg": "image/svg+xml",
 };
 
-const map = generateMap();
+const PLAYERS = Number(process.env.PLAYERS ?? 2);
+const preset = mapPreset(PLAYERS);
+const { map, starts } = generateMap(preset.players, Number(process.env.SEED ?? 1));
 const sim = new Sim(map);
-sim.setSupplyNodes(generateSupplyNodes(map));
-const starts = startPositions(map);
+sim.setSupplyNodes(generateSupplyNodes(map, starts));
 
 /** Sockets by player id, so a disconnect frees its slot. */
 const clients = new Map<number, WebSocket>();
@@ -136,6 +138,10 @@ wss.on("connection", (ws) => {
       sim.placeBuilding(playerId, msg.buildingType, msg.x, msg.y);
     } else if (msg.t === "train" && typeof msg.buildingId === "number") {
       sim.queueUnit(playerId, msg.buildingId, msg.unitType);
+    } else if (msg.t === "order" && Array.isArray(msg.unitIds)) {
+      sim.issueOrder(playerId, msg.unitIds, msg.order);
+    } else if (msg.t === "rally" && typeof msg.buildingId === "number") {
+      sim.setRally(playerId, msg.buildingId, msg.x, msg.y);
     }
   });
 
@@ -153,11 +159,19 @@ setInterval(() => {
   const units = sim.snapshotUnits();
   const buildings = sim.snapshotBuildings();
   const supply = sim.snapshotSupply();
+  const tracers = [...sim.tracers];
   for (const [id, ws] of clients) {
-    send(ws, { t: "snap", tick: sim.tick, units, buildings, supply, economy: sim.economy(id) });
+    send(ws, {
+      t: "snap", tick: sim.tick, units, buildings, supply, tracers,
+      economy: sim.economy(id),
+      eliminated: [...sim.eliminated],
+    });
   }
 }, 1000 / TICK_RATE);
 
 httpServer.listen(PORT, () => {
-  console.log(`server listening on http://localhost:${PORT} (tick ${TICK_RATE}Hz)`);
+  console.log(
+    `server listening on http://localhost:${PORT} (tick ${TICK_RATE}Hz, ` +
+      `map "${preset.name}" ${map.width}x${map.height} for ${preset.players} players)`,
+  );
 });

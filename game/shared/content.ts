@@ -1,16 +1,38 @@
 /**
- * Game content: what exists, what it costs, what it needs, what it makes.
+ * Game content: what exists, what it costs, what it needs, what it makes, and
+ * what it does to what.
  *
  * Shaped like Generals -- a command centre that unlocks everything, power as a
  * real constraint, a barracks/war-factory split, and supply as the economy --
  * but the numbers are ours and tuned for play rather than authenticity.
  *
- * Everything the tech tree needs lives in this one file on purpose: balance
- * changes should be a data edit, never a code edit.
+ * Everything balance-related lives in this one file on purpose: tuning should
+ * be a data edit, never a code edit.
  */
-import type { BuildingTypeDef, UnitTypeDef } from "./types.js";
+import type {
+  ArmourType,
+  BuildingTypeDef,
+  DamageType,
+  UnitTypeDef,
+} from "./types.js";
 
-/** Seconds of build time are converted to ticks by the sim. */
+/**
+ * The damage matrix: what each damage type does to each armour class.
+ *
+ * This is the core of the game's rock-paper-scissors, and everything else in
+ * combat is arithmetic on top of it. A 0 means genuinely cannot hit -- target
+ * acquisition uses the same table to skip targets a weapon could never hurt,
+ * so a tank never wastes time chasing an aircraft.
+ */
+export const DAMAGE_MATRIX: Record<DamageType, Record<ArmourType, number>> = {
+  //          infantry  light  heavy  structure  air
+  gun:       { infantry: 1.00, light: 0.50, heavy: 0.25, structure: 0.25, air: 0.30 },
+  cannon:    { infantry: 0.50, light: 1.00, heavy: 1.00, structure: 0.80, air: 0.00 },
+  rocket:    { infantry: 0.40, light: 1.25, heavy: 1.50, structure: 1.00, air: 0.50 },
+  flak:      { infantry: 0.60, light: 0.50, heavy: 0.20, structure: 0.20, air: 1.50 },
+  explosive: { infantry: 1.25, light: 0.80, heavy: 0.60, structure: 1.50, air: 0.00 },
+};
+
 export const BUILDINGS: Record<string, BuildingTypeDef> = {
   command_center: {
     id: "command_center",
@@ -23,6 +45,8 @@ export const BUILDINGS: Record<string, BuildingTypeDef> = {
     requires: [],
     produces: ["dozer"],
     description: "Builds dozers. Losing every one of these loses you the game.",
+    armour: "structure",
+    vision: 8,
   },
   power_plant: {
     id: "power_plant",
@@ -35,6 +59,8 @@ export const BUILDINGS: Record<string, BuildingTypeDef> = {
     requires: ["command_center"],
     produces: [],
     description: "Supplies power. Everything else draws from it.",
+    armour: "structure",
+    vision: 6,
   },
   supply_center: {
     id: "supply_center",
@@ -47,6 +73,8 @@ export const BUILDINGS: Record<string, BuildingTypeDef> = {
     requires: ["command_center"],
     produces: ["harvester"],
     description: "Harvesters return supplies here. Build this first or starve.",
+    armour: "structure",
+    vision: 7,
   },
   barracks: {
     id: "barracks",
@@ -59,6 +87,8 @@ export const BUILDINGS: Record<string, BuildingTypeDef> = {
     requires: ["command_center"],
     produces: ["infantry", "rocket"],
     description: "Trains infantry.",
+    armour: "structure",
+    vision: 7,
   },
   war_factory: {
     id: "war_factory",
@@ -71,6 +101,8 @@ export const BUILDINGS: Record<string, BuildingTypeDef> = {
     requires: ["barracks"],
     produces: ["tank", "aa_vehicle"],
     description: "Builds vehicles. Needs a barracks first.",
+    armour: "structure",
+    vision: 7,
   },
   turret: {
     id: "turret",
@@ -82,7 +114,10 @@ export const BUILDINGS: Record<string, BuildingTypeDef> = {
     power: -3,
     requires: ["barracks"],
     produces: [],
-    description: "Static defense. Cheap insurance against an early rush.",
+    description: "Static defense. Outranges everything that walks.",
+    armour: "structure",
+    vision: 11,
+    weapon: { damage: 45, damageType: "cannon", range: 9, reload: 1.8 },
   },
 };
 
@@ -90,32 +125,42 @@ export const UNITS: Record<string, UnitTypeDef> = {
   dozer: {
     id: "dozer", name: "Dozer", cost: 500, buildTime: 8,
     speed: 3.4, maxHp: 300, radius: 0.5, producedBy: "command_center",
-    role: "Constructs buildings.",
+    role: "Constructs buildings. Unarmed.",
+    armour: "light", vision: 6,
   },
   harvester: {
     id: "harvester", name: "Harvester", cost: 700, buildTime: 10,
     speed: 4.0, maxHp: 400, radius: 0.55, producedBy: "supply_center",
-    role: "Gathers supplies.",
+    role: "Gathers supplies. Unarmed.",
+    armour: "light", vision: 6,
   },
   infantry: {
     id: "infantry", name: "Rifle Infantry", cost: 200, buildTime: 5,
     speed: 3.2, maxHp: 100, radius: 0.32, producedBy: "barracks",
-    role: "Cheap anti-infantry.",
+    role: "Cheap anti-infantry. Useless against armour.",
+    armour: "infantry", vision: 7,
+    weapon: { damage: 12, damageType: "gun", range: 5, reload: 1.0 },
   },
   rocket: {
     id: "rocket", name: "Rocket Infantry", cost: 350, buildTime: 7,
     speed: 2.8, maxHp: 90, radius: 0.32, producedBy: "barracks",
-    role: "Anti-vehicle and anti-air.",
+    role: "Anti-vehicle. Shreds tanks, poor against infantry.",
+    armour: "infantry", vision: 7,
+    weapon: { damage: 40, damageType: "rocket", range: 6.5, reload: 2.2 },
   },
   tank: {
     id: "tank", name: "Battle Tank", cost: 800, buildTime: 12,
     speed: 4.2, maxHp: 500, radius: 0.6, producedBy: "war_factory",
-    role: "Main battle vehicle.",
+    role: "Main battle vehicle. Crushes infantry, fears rockets.",
+    armour: "heavy", vision: 8,
+    weapon: { damage: 55, damageType: "cannon", range: 7, reload: 2.0 },
   },
   aa_vehicle: {
     id: "aa_vehicle", name: "AA Vehicle", cost: 700, buildTime: 10,
     speed: 4.6, maxHp: 300, radius: 0.55, producedBy: "war_factory",
-    role: "Dedicated anti-air.",
+    role: "Dedicated anti-air. Weak on the ground.",
+    armour: "light", vision: 9,
+    weapon: { damage: 30, damageType: "flak", range: 7.5, reload: 1.2 },
   },
 };
 
@@ -129,6 +174,35 @@ export function buildingDef(type: string): BuildingTypeDef {
   const d = BUILDINGS[type];
   if (!d) throw new Error(`unknown building type: ${type}`);
   return d;
+}
+
+/** Damage multiplier for a pairing. */
+export function damageMultiplier(dmg: DamageType, armour: ArmourType): number {
+  return DAMAGE_MATRIX[dmg][armour];
+}
+
+/**
+ * Map presets, keyed by player count.
+ *
+ * Size scales with players so the distance between neighbouring bases -- and
+ * therefore rush timing -- stays roughly constant as the lobby grows.
+ */
+export interface MapPreset {
+  players: number;
+  size: number;
+  name: string;
+}
+
+export const MAP_PRESETS: Record<number, MapPreset> = {
+  2: { players: 2, size: 64, name: "Duel" },
+  3: { players: 3, size: 80, name: "Three-Way" },
+  4: { players: 4, size: 96, name: "Crossroads" },
+  5: { players: 5, size: 104, name: "Five Points" },
+  6: { players: 6, size: 112, name: "Six Corners" },
+};
+
+export function mapPreset(players: number): MapPreset {
+  return MAP_PRESETS[players] ?? MAP_PRESETS[2]!;
 }
 
 /** How much a harvester carries per trip. */

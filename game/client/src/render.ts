@@ -29,6 +29,7 @@ export class Renderer {
   private supplyLayer = new Graphics();
   private buildingLayer = new Graphics();
   private unitLayer = new Graphics();
+  private fxLayer = new Graphics();
   private overlay = new Graphics();
 
   camX = 0;
@@ -44,7 +45,13 @@ export class Renderer {
     document.body.appendChild(this.app.canvas);
 
     // Buildings sit under units so infantry standing on a base stay visible.
-    this.world.addChild(this.terrainLayer, this.supplyLayer, this.buildingLayer, this.unitLayer);
+    this.world.addChild(
+      this.terrainLayer,
+      this.supplyLayer,
+      this.buildingLayer,
+      this.unitLayer,
+      this.fxLayer,
+    );
     this.app.stage.addChild(this.world, this.overlay);
   }
 
@@ -103,6 +110,7 @@ export class Renderer {
       size: number;
       progress: number;
       selected: boolean;
+      hpFrac: number;
     }>,
   ): void {
     const g = this.buildingLayer;
@@ -125,6 +133,8 @@ export class Renderer {
       if (b.selected) {
         g.rect(b.x - 0.1, b.y - 0.1, b.size + 0.2, b.size + 0.2).stroke({ color: 0xffffff, width: 0.09 });
       }
+
+      this.healthBar(g, b.x + b.size / 2, b.y - 0.35, b.size * 0.8, b.hpFrac);
     }
   }
 
@@ -138,7 +148,9 @@ export class Renderer {
   }
 
   drawUnits(
-    units: Array<{ id: number; owner: number; x: number; y: number; radius: number }>,
+    units: Array<{
+      id: number; owner: number; x: number; y: number; radius: number; hpFrac: number;
+    }>,
     selected: ReadonlySet<number>,
   ): void {
     const g = this.unitLayer;
@@ -150,7 +162,44 @@ export class Renderer {
         g.circle(u.x, u.y, u.radius * 1.45).fill(0xffffff);
       }
       g.circle(u.x, u.y, u.radius).fill(color);
+      this.healthBar(g, u.x, u.y - u.radius - 0.3, u.radius * 2.2, u.hpFrac);
     }
+  }
+
+  /**
+   * Muzzle-to-target lines for shots fired recently.
+   *
+   * The sim reports a shot for exactly one 15Hz tick, which is 66ms -- too
+   * brief to register. The caller keeps them alive a little longer and passes
+   * an alpha so they fade out instead of blinking.
+   */
+  drawTracers(tracers: Array<{ x0: number; y0: number; x1: number; y1: number; alpha: number }>): void {
+    const g = this.fxLayer;
+    g.clear();
+    for (const t of tracers) {
+      g.moveTo(t.x0, t.y0).lineTo(t.x1, t.y1)
+        .stroke({ color: 0xffe9a3, width: 0.07, alpha: t.alpha });
+    }
+  }
+
+  /** A health bar above anything damaged. Full-health things stay uncluttered. */
+  private healthBar(g: Graphics, x: number, y: number, w: number, frac: number): void {
+    if (frac >= 0.999) return;
+    const h = 0.14;
+    const clamped = Math.max(0, Math.min(1, frac));
+    g.rect(x - w / 2, y, w, h).fill({ color: 0x000000, alpha: 0.55 });
+    g.rect(x - w / 2, y, w * clamped, h).fill(
+      clamped > 0.6 ? 0x6fd06f : clamped > 0.3 ? 0xd9c04a : 0xd05a4a,
+    );
+  }
+
+  /** Marker showing where a selected building sends its production. */
+  drawRally(from: { x: number; y: number } | null, to: { x: number; y: number } | null): void {
+    if (!from || !to) return;
+    const g = this.fxLayer;
+    g.moveTo(from.x, from.y).lineTo(to.x, to.y)
+      .stroke({ color: 0x9fe870, width: 0.06, alpha: 0.55 });
+    g.circle(to.x, to.y, 0.35).stroke({ color: 0x9fe870, width: 0.08 });
   }
 
   /** Screen-space overlay: the selection box. */
