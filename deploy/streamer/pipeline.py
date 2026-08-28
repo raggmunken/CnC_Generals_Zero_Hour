@@ -159,6 +159,13 @@ class StreamPipeline:
             "notify::ice-connection-state", self._on_ice_connection_state
         )
 
+        # webrtcbin only builds its SCTP/DTLS objects once the element leaves
+        # NULL, and create-data-channel asserts on a bin it considers closed.
+        # READY is enough to initialise it and, unlike PLAYING, does not fire
+        # on-negotiation-needed -- so the channel still makes it into the first
+        # offer below.
+        self.pipe.set_state(Gst.State.READY)
+
         # Create the input data channel BEFORE negotiation so it lands in the
         # first offer. ordered=false + maxRetransmits=0 makes it behave like
         # UDP: a lost mouse position is worthless a frame later, and head-of-
