@@ -62,6 +62,18 @@ export interface WeaponDef {
   range: number;
   /** Seconds between shots. */
   reload: number;
+  /**
+   * Area damage around the impact point.
+   *
+   * Absent means a single-target weapon. Splash is what makes massed infantry
+   * a liability and gives artillery a reason to exist beyond raw damage.
+   */
+  splash?: {
+    /** World units from the impact at which damage reaches `minFraction`. */
+    radius: number;
+    /** Share of full damage still dealt at the very edge. */
+    minFraction: number;
+  };
 }
 
 /**

@@ -31,6 +31,7 @@ export class Renderer {
   private buildingLayer = new Graphics();
   private unitLayer = new Graphics();
   private fxLayer = new Graphics();
+  private fogLayer = new Graphics();
   private overlay = new Graphics();
 
   camX = 0;
@@ -52,6 +53,7 @@ export class Renderer {
       this.buildingLayer,
       this.unitLayer,
       this.fxLayer,
+      this.fogLayer,
     );
     this.app.stage.addChild(this.world, this.overlay);
   }
@@ -201,6 +203,42 @@ export class Renderer {
     g.moveTo(from.x, from.y).lineTo(to.x, to.y)
       .stroke({ color: 0x9fe870, width: 0.06, alpha: 0.55 });
     g.circle(to.x, to.y, 0.35).stroke({ color: 0x9fe870, width: 0.08 });
+  }
+
+  /**
+   * Draw the fog of war.
+   *
+   * Two states: never seen is opaque, seen but not currently observed is dim
+   * so remembered terrain and buildings stay readable. Rectangles are merged
+   * into row runs first -- a 96x96 map is over nine thousand tiles, and
+   * emitting one rect each would cost more than the rest of the frame.
+   */
+  drawFog(width: number, height: number, explored: Uint8Array, visible: Uint8Array): void {
+    const g = this.fogLayer;
+    g.clear();
+
+    for (let y = 0; y < height; y++) {
+      let runStart = -1;
+      let runKind = 0; // 1 = unexplored, 2 = explored but not visible
+
+      const flush = (endX: number) => {
+        if (runStart < 0) return;
+        const alpha = runKind === 1 ? 1 : 0.45;
+        g.rect(runStart, y, endX - runStart, 1).fill({ color: 0x05070a, alpha });
+        runStart = -1;
+      };
+
+      for (let x = 0; x < width; x++) {
+        const i = y * width + x;
+        const kind = !explored[i] ? 1 : visible[i] ? 0 : 2;
+        if (kind !== runKind) {
+          flush(x);
+          runKind = kind;
+          if (kind !== 0) runStart = x;
+        }
+      }
+      flush(width);
+    }
   }
 
   /** Screen-space overlay: the selection box. */

@@ -148,38 +148,25 @@ async function readCredits(): Promise<number> {
   return m ? Number(m[1]) : NaN;
 }
 
-/** Read one authoritative snapshot: building count and our credits. */
+/**
+ * Read this client's own view.
+ *
+ * A second socket cannot be used to observe the world any more: fog of war
+ * means a fresh connection joins as a different player who sees only their own
+ * units. Reading through the browser is also the more honest test -- it checks
+ * what the player actually receives.
+ */
 async function readState(): Promise<{ buildings: number; credits: number }> {
-  const { WebSocket } = await import("ws");
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(URL.replace(/^http/, "ws").replace(/\/$/, "") + "/ws");
-    const timer = setTimeout(() => { ws.close(); reject(new Error("state timeout")); }, 5000);
-    ws.on("message", (data) => {
-      const msg = JSON.parse(String(data));
-      if (msg.t !== "snap") return;
-      clearTimeout(timer);
-      ws.close();
-      resolve({ buildings: msg.buildings.length, credits: msg.economy.credits });
-    });
-    ws.on("error", reject);
-  });
+  const v = await page.evaluate(() => (window as any).__rts);
+  return { buildings: v?.buildings?.length ?? 0, credits: v?.economy?.credits ?? 0 };
 }
 
-/** Open a throwaway socket and read one snapshot of authoritative positions. */
+/** Authoritative unit positions as this client receives them. */
 async function readUnitPositions(): Promise<Map<number, { x: number; y: number }>> {
-  const { WebSocket } = await import("ws");
-  return new Promise((resolve, reject) => {
-    const ws = new WebSocket(URL.replace(/^http/, "ws").replace(/\/$/, "") + "/ws");
-    const timer = setTimeout(() => { ws.close(); reject(new Error("snapshot timeout")); }, 5000);
-    ws.on("message", (data) => {
-      const msg = JSON.parse(String(data));
-      if (msg.t !== "snap") return;
-      clearTimeout(timer);
-      const out = new Map<number, { x: number; y: number }>();
-      for (const u of msg.units) out.set(u.id, { x: u.x, y: u.y });
-      ws.close();
-      resolve(out);
-    });
-    ws.on("error", reject);
-  });
+  const v = await page.evaluate(() => (window as any).__rts);
+  const out = new Map<number, { x: number; y: number }>();
+  for (const u of (v?.units ?? []) as Array<{ id: number; x: number; y: number }>) {
+    out.set(u.id, { x: u.x, y: u.y });
+  }
+  return out;
 }

@@ -102,15 +102,9 @@ class EnemyModel {
 
   /** Record what our own units and buildings can currently see. */
   observe(sim: Sim, playerId: number): void {
-    const eyes: Array<{ x: number; y: number; vision: number }> = [];
-    for (const u of sim.units.values()) {
-      if (u.owner === playerId) eyes.push({ x: u.x, y: u.y, vision: unitDef(u.type).vision });
-    }
-    for (const b of sim.buildings.values()) {
-      if (b.owner !== playerId) continue;
-      const d = buildingDef(b.type);
-      eyes.push({ x: b.x + d.size / 2, y: b.y + d.size / 2, vision: d.vision });
-    }
+    // Same definition of sight the snapshot filter uses, so the AI can never
+    // know something a human player in its position would not.
+    const eyes = sim.visionSources(playerId);
     if (eyes.length === 0) return;
 
     const fresh: Sighting = { infantry: 0, vehicle: 0, air: 0, structure: 0 };
@@ -216,6 +210,22 @@ export class AIPlayer {
   ) {
     this.tuning = typeof difficulty === "string" ? TUNING[difficulty] : difficulty;
     this.rand = rng(0x9e3779b9 ^ (playerId * 2654435761));
+  }
+
+  /**
+   * What this AI currently believes about the enemy.
+   *
+   * Exposed so the fog claim can be tested rather than asserted: an AI that
+   * "respects vision" needs to be demonstrably blind to things it has not
+   * seen, and this is also the first thing worth printing when its decisions
+   * look wrong.
+   */
+  intel(): { blind: boolean; knownBase: { x: number; y: number } | null; mobile: number } {
+    return {
+      blind: this.model.isBlind(),
+      knownBase: this.model.knownBase(),
+      mobile: this.model.mobile,
+    };
   }
 
   /** Called every tick; does real work only on its own slower cadence. */
@@ -354,8 +364,16 @@ export class AIPlayer {
         if (this.tryBuild("war_factory")) return;
       }
     }
-    if (eco.credits > 2500 && has("turret") < 2) {
-      this.tryBuild("turret");
+    // Defend against what has actually been seen, rather than building a
+    // generic turret: this is the same counter-composition logic the
+    // production queue uses, applied to static defence.
+    const defences = has("gun_turret") + has("cannon_turret") + has("aa_turret");
+    if (eco.credits > 2500 && defences < 3) {
+      if (this.model.needsAntiAir() && has("aa_turret") < 1) {
+        if (this.tryBuild("aa_turret")) return;
+      }
+      const pick = this.model.vehicleFraction() > 0.4 ? "cannon_turret" : "gun_turret";
+      this.tryBuild(pick);
     }
   }
 

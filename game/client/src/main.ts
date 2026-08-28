@@ -47,6 +47,17 @@ let attackMoveArmed = false;
 let eliminated: number[] = [];
 
 /**
+ * Fog state.
+ *
+ * `explored` is cumulative and never cleared -- once you have seen ground you
+ * remember its shape. `visible` is recomputed from the vision circles the
+ * server sends each snapshot.
+ */
+let explored = new Uint8Array(0);
+let visible = new Uint8Array(0);
+let fogDirty = true;
+
+/**
  * Tracers with the wall-clock time they arrived.
  *
  * The sim reports a shot for one 15Hz tick, which is too brief to see. Holding
@@ -72,6 +83,8 @@ net.onMessage = (msg: ServerMsg) => {
     mapW = msg.map.width;
     mapH = msg.map.height;
     renderer.buildTerrain(mapW, mapH, msg.map.tiles);
+    explored = new Uint8Array(mapW * mapH);
+    visible = new Uint8Array(mapW * mapH);
     // Camera is centred once our units actually arrive -- see below. Welcome
     // lands before the first snapshot, so there is nothing to centre on yet.
   } else if (msg.t === "snap") {
@@ -82,6 +95,18 @@ net.onMessage = (msg: ServerMsg) => {
     buildings = msg.buildings;
     supply = msg.supply;
     eliminated = msg.eliminated;
+    updateFog(msg.vision);
+
+    // Expose this client's view for tests and debugging. Safe to publish: the
+    // server has already filtered it to what this player may know, so there is
+    // nothing here a modified client could not read anyway.
+    (window as unknown as { __rts?: unknown }).__rts = {
+      playerId,
+      units: msg.units,
+      buildings: msg.buildings,
+      economy: msg.economy,
+      tick: msg.tick,
+    };
     const now = performance.now();
     for (const t of msg.tracers) liveTracers.push({ ...t, at: now });
     for (const n of supply) {
@@ -106,6 +131,39 @@ net.connect();
  * so there are no units to centre on yet and the camera would sit on the map
  * centre while the player's base is in a corner, off screen.
  */
+/**
+ * Rasterise the vision circles the server sent into the fog grids.
+ *
+ * Done from circles rather than a transmitted bitmap: a 112x112 grid every
+ * tick is far more bandwidth than a handful of positions, and the client has
+ * to walk the tiles to draw them anyway.
+ */
+function updateFog(sources: Array<{ x: number; y: number; vision: number }>): void {
+  if (explored.length === 0) return;
+  visible.fill(0);
+
+  for (const s of sources) {
+    const r = Math.ceil(s.vision);
+    const minX = Math.max(0, Math.floor(s.x - r));
+    const maxX = Math.min(mapW - 1, Math.ceil(s.x + r));
+    const minY = Math.max(0, Math.floor(s.y - r));
+    const maxY = Math.min(mapH - 1, Math.ceil(s.y + r));
+    const r2 = s.vision * s.vision;
+
+    for (let y = minY; y <= maxY; y++) {
+      for (let x = minX; x <= maxX; x++) {
+        const dx = x + 0.5 - s.x;
+        const dy = y + 0.5 - s.y;
+        if (dx * dx + dy * dy > r2) continue;
+        const i = y * mapW + x;
+        visible[i] = 1;
+        explored[i] = 1;
+      }
+    }
+  }
+  fogDirty = true;
+}
+
 function centreOnOwnUnits(): void {
   const mine = [...currUnits.values()].filter((u) => u.owner === playerId);
   if (mine.length === 0) return;
@@ -504,6 +562,11 @@ renderer.app.ticker.add(() => {
       { x: rallyOf.x + size / 2, y: rallyOf.y + size / 2 },
       { x: rallyOf.rallyX, y: rallyOf.rallyY },
     );
+  }
+
+  if (fogDirty && explored.length > 0) {
+    renderer.drawFog(mapW, mapH, explored, visible);
+    fogDirty = false;
   }
 
   renderer.drawSelectionBox(

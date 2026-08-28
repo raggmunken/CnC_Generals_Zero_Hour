@@ -27,6 +27,13 @@ export interface SnapshotMsg {
   tracers: Tracer[];
   /** Player ids with nothing left on the field. */
   eliminated: number[];
+  /**
+   * Where this player can currently see from.
+   *
+   * Sent rather than a fog bitmap: a 112x112 grid at 15Hz is far more
+   * bandwidth than a handful of circles, and the client can rasterise it.
+   */
+  vision: Array<{ x: number; y: number; vision: number }>;
   /** The receiving player's own economy only. */
   economy: Economy;
 }

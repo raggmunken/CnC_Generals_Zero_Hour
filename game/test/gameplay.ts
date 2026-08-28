@@ -171,7 +171,7 @@ section("Combat");
   sim.economy(1).credits = 99999;
   const tbar = sim.placeBuilding(1, "barracks", 34, 30)!;
   tbar.buildRemaining = 0; // turrets are gated behind a barracks
-  const turret = sim.placeBuilding(1, "turret", 26, 30)!;
+  const turret = sim.placeBuilding(1, "gun_turret", 26, 30)!;
   turret.buildRemaining = 0;
   const attacker = sim.spawnUnit(0, "infantry", 22, 30);
   run(sim, 25);
@@ -225,6 +225,80 @@ section("Movement, collision and terrain");
      `at ${u.x.toFixed(0)},${u.y.toFixed(0)}`);
 }
 
+// -- vision and fog --------------------------------------------------------
+section("Vision and fog of war");
+{
+  const sim = arena();
+  base(sim, 0, 10, 10);
+  sim.spawnUnit(0, "infantry", 12, 12);
+  const far = sim.spawnUnit(1, "tank", 50, 50);
+  const near = sim.spawnUnit(1, "tank", 14, 12);
+
+  const eyes = sim.visionSources(0);
+  const sees = (x: number, y: number) => eyes.some((e) => Math.hypot(e.x - x, e.y - y) <= e.vision);
+
+  ok("own units provide vision", eyes.length >= 2, `${eyes.length} sources`);
+  ok("a nearby enemy is visible", sees(near.x, near.y));
+  ok("a distant enemy is not", !sees(far.x, far.y));
+
+  // The AI must be held to the same limit, or "fog-respecting" is a claim
+  // rather than a property. Remove the enemy it can see and leave only the
+  // distant one: it must stay blind.
+  sim.units.delete(near.id);
+  const bot = new AIPlayer(sim, 0, "normal");
+  for (let i = 0; i < 5 * TICK_RATE; i++) bot.update();
+  ok("the AI is blind to what it has not seen", bot.intel().blind, JSON.stringify(bot.intel()));
+
+  // ...and learns the moment something walks into sight.
+  sim.spawnUnit(1, "tank", 13, 12);
+  for (let i = 0; i < 5 * TICK_RATE; i++) { bot.update(); sim.step(); }
+  ok("the AI learns what it does see", !bot.intel().blind, JSON.stringify(bot.intel()));
+}
+
+// -- splash and weapon roles -----------------------------------------------
+section("Weapon roles and splash");
+{
+  const sim = arena();
+  const crowd = [0, 1, 2, 3].map((i) => sim.spawnUnit(1, "infantry", 30 + i * 0.7, 20));
+  sim.spawnUnit(0, "artillery", 20, 20);
+  run(sim, 6);
+  const hit = crowd.filter((u) => !sim.units.has(u.id) || u.hp < 100).length;
+  ok("splash damages a cluster, not one unit", hit >= 3, `${hit}/4 hit`);
+}
+{
+  const sim = arena();
+  const crowd = [0, 1, 2, 3].map((i) => sim.spawnUnit(1, "infantry", 26 + i * 0.7, 20));
+  sim.spawnUnit(0, "tank", 20, 20);
+  run(sim, 2);
+  const hit = crowd.filter((u) => !sim.units.has(u.id) || u.hp < 100).length;
+  ok("single-target weapons hit one", hit <= 1, `${hit}/4 hit`);
+}
+{
+  function clearTime(defence: string, attacker: string, count: number): number {
+    const sim = arena();
+    sim.economy(1).credits = 99999;
+    for (const [type, x, y] of [["command_center", 40, 40], ["barracks", 46, 40], ["war_factory", 50, 40]] as const) {
+      const b2 = sim.placeBuilding(1, type, x, y);
+      if (b2) b2.buildRemaining = 0;
+    }
+    const d = sim.placeBuilding(1, defence, 30, 20)!;
+    d.buildRemaining = 0;
+    const atk: Unit[] = [];
+    for (let i = 0; i < count; i++) atk.push(sim.spawnUnit(0, attacker, 25 + i * 0.8, 20));
+    for (let t = 0; t < 90 * TICK_RATE; t++) {
+      sim.step();
+      if (atk.every((u) => !sim.units.has(u.id))) return t;
+    }
+    return Infinity;
+  }
+  const gI = clearTime("gun_turret", "infantry", 6);
+  const cI = clearTime("cannon_turret", "infantry", 6);
+  const gT = clearTime("gun_turret", "tank", 2);
+  const cT = clearTime("cannon_turret", "tank", 2);
+  ok("gun nest counters infantry", gI < cI, `gun=${gI} vs cannon=${cI}`);
+  ok("cannon tower counters armour", cT < gT, `cannon=${cT} vs gun=${gT}`);
+}
+
 // -- the AI ----------------------------------------------------------------
 section("Computer opponent");
 {
@@ -253,13 +327,12 @@ section("Computer opponent");
 
 // -- known gaps ------------------------------------------------------------
 section("Not implemented");
-gap("fog of war (client)", "the AI respects vision; the client still draws the whole map");
-gap("aircraft", "the air armour class and flak weapons exist, but no unit flies yet");
+gap("aircraft", "the air armour class, flak weapons and AA battery exist, but no unit flies yet");
 gap("lobby", "map, bot count and difficulty come from env vars, not a UI");
 gap("save/load and replays", "no persistence of any kind");
 gap("sound", "no audio at all");
-gap("unit veterancy, stealth, splash damage", "deliberately out of scope for now");
-gap("sprites in the renderer", "generator exists in tools/, renderer still draws circles");
+gap("unit veterancy and stealth", "deliberately out of scope for now");
+gap("sprites in the renderer", "assets/atlas.png is generated, renderer still draws shapes");
 
 console.log(
   `\n${pass} working, ${failed.length} broken, ${missing.length} not implemented` +

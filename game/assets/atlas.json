@@ -1,0 +1,190 @@
+{
+  "cell": 128,
+  "note": "Each cell is a square canvas. `tiles` is the element's real footprint in world tiles; the renderer scales the cell to that.",
+  "sprites": {
+    "terrain.ground": {
+      "x": 10,
+      "y": 68,
+      "w": 128,
+      "h": 128,
+      "tiles": 1,
+      "label": "ground"
+    },
+    "terrain.rough": {
+      "x": 148,
+      "y": 68,
+      "w": 128,
+      "h": 128,
+      "tiles": 1,
+      "label": "rough"
+    },
+    "terrain.water": {
+      "x": 286,
+      "y": 68,
+      "w": 128,
+      "h": 128,
+      "tiles": 1,
+      "label": "water"
+    },
+    "terrain.mountain": {
+      "x": 424,
+      "y": 68,
+      "w": 128,
+      "h": 128,
+      "tiles": 1,
+      "label": "mountain"
+    },
+    "terrain.trees": {
+      "x": 562,
+      "y": 68,
+      "w": 128,
+      "h": 128,
+      "tiles": 1,
+      "label": "trees"
+    },
+    "building.command_center": {
+      "x": 10,
+      "y": 272,
+      "w": 128,
+      "h": 128,
+      "tiles": 3,
+      "label": "Command Center"
+    },
+    "building.power_plant": {
+      "x": 148,
+      "y": 272,
+      "w": 128,
+      "h": 128,
+      "tiles": 2,
+      "label": "Power Plant"
+    },
+    "building.supply_center": {
+      "x": 286,
+      "y": 272,
+      "w": 128,
+      "h": 128,
+      "tiles": 3,
+      "label": "Supply Center"
+    },
+    "building.barracks": {
+      "x": 424,
+      "y": 272,
+      "w": 128,
+      "h": 128,
+      "tiles": 2,
+      "label": "Barracks"
+    },
+    "building.war_factory": {
+      "x": 562,
+      "y": 272,
+      "w": 128,
+      "h": 128,
+      "tiles": 3,
+      "label": "War Factory"
+    },
+    "building.gun_turret": {
+      "x": 700,
+      "y": 272,
+      "w": 128,
+      "h": 128,
+      "tiles": 1,
+      "label": "Gun Nest"
+    },
+    "building.cannon_turret": {
+      "x": 838,
+      "y": 272,
+      "w": 128,
+      "h": 128,
+      "tiles": 1,
+      "label": "Cannon Tower"
+    },
+    "building.aa_turret": {
+      "x": 976,
+      "y": 272,
+      "w": 128,
+      "h": 128,
+      "tiles": 1,
+      "label": "AA Battery"
+    },
+    "unit.dozer": {
+      "x": 10,
+      "y": 476,
+      "w": 128,
+      "h": 128,
+      "tiles": 1,
+      "label": "Dozer"
+    },
+    "unit.harvester": {
+      "x": 148,
+      "y": 476,
+      "w": 128,
+      "h": 128,
+      "tiles": 1,
+      "label": "Harvester"
+    },
+    "unit.infantry": {
+      "x": 286,
+      "y": 476,
+      "w": 128,
+      "h": 128,
+      "tiles": 1,
+      "label": "Rifle Infantry"
+    },
+    "unit.rocket": {
+      "x": 424,
+      "y": 476,
+      "w": 128,
+      "h": 128,
+      "tiles": 1,
+      "label": "Rocket Infantry"
+    },
+    "unit.tank": {
+      "x": 562,
+      "y": 476,
+      "w": 128,
+      "h": 128,
+      "tiles": 1,
+      "label": "Battle Tank"
+    },
+    "unit.aa_vehicle": {
+      "x": 700,
+      "y": 476,
+      "w": 128,
+      "h": 128,
+      "tiles": 1,
+      "label": "AA Vehicle"
+    },
+    "unit.artillery": {
+      "x": 838,
+      "y": 476,
+      "w": 128,
+      "h": 128,
+      "tiles": 1,
+      "label": "Artillery"
+    },
+    "overlay.supply": {
+      "x": 10,
+      "y": 680,
+      "w": 128,
+      "h": 128,
+      "tiles": 2,
+      "label": "Supply Pile"
+    },
+    "overlay.selection": {
+      "x": 148,
+      "y": 680,
+      "w": 128,
+      "h": 128,
+      "tiles": 1,
+      "label": "Selection Ring"
+    },
+    "overlay.rally": {
+      "x": 286,
+      "y": 680,
+      "w": 128,
+      "h": 128,
+      "tiles": 1,
+      "label": "Rally Marker"
+    }
+  }
+}

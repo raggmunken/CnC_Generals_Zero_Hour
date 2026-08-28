@@ -11,11 +11,11 @@ import { fileURLToPath } from "node:url";
 import { WebSocketServer, type WebSocket } from "ws";
 
 import { generateMap, generateSupplyNodes } from "./mapgen.js";
-import { mapPreset } from "../shared/content.js";
+import { buildingDef, mapPreset } from "../shared/content.js";
 import { AIPlayer, type Difficulty } from "./ai.js";
 import { Sim, TICK_RATE } from "./sim.js";
 import type { ClientMsg, ServerMsg } from "../shared/protocol.js";
-import type { FactionId } from "../shared/types.js";
+import type { Building, FactionId, Unit } from "../shared/types.js";
 
 const PORT = Number(process.env.PORT ?? 8090);
 const DIST = fileURLToPath(new URL("../dist/", import.meta.url));
@@ -182,6 +182,56 @@ wss.on("connection", (ws) => {
   });
 });
 
+/**
+ * Last-known enemy buildings per player.
+ *
+ * Buildings do not walk away, so a player keeps seeing one where they last saw
+ * it even after losing sight -- which is how every RTS handles a scouted base.
+ * Units get no such memory: an army you cannot see is genuinely gone.
+ */
+const remembered = new Map<number, Map<number, Building>>();
+
+/** Filter a snapshot down to what this player is allowed to know. */
+function viewFor(playerId: number, units: Unit[], buildings: Building[]) {
+  const eyes = sim.visionSources(playerId);
+  const sees = (x: number, y: number) =>
+    eyes.some((e) => Math.hypot(e.x - x, e.y - y) <= e.vision);
+
+  let memory = remembered.get(playerId);
+  if (!memory) {
+    memory = new Map();
+    remembered.set(playerId, memory);
+  }
+
+  const visibleUnits = units.filter((u) => u.owner === playerId || sees(u.x, u.y));
+
+  const visibleBuildings: Building[] = [];
+  const stillStanding = new Set<number>();
+  for (const b of buildings) {
+    stillStanding.add(b.id);
+    const d = buildingDef(b.type);
+    if (b.owner === playerId || sees(b.x + d.size / 2, b.y + d.size / 2)) {
+      visibleBuildings.push(b);
+      memory.set(b.id, { ...b });
+    }
+  }
+
+  // Add remembered buildings we can no longer see. Ones we can see being
+  // destroyed are forgotten; ones destroyed out of sight stay on the map as a
+  // stale memory, which is correct -- the player has not learned otherwise.
+  for (const [id, b] of memory) {
+    if (stillStanding.has(id) && visibleBuildings.some((v) => v.id === id)) continue;
+    const d = buildingDef(b.type);
+    if (sees(b.x + d.size / 2, b.y + d.size / 2)) {
+      memory.delete(id); // watched it go
+      continue;
+    }
+    if (!visibleBuildings.some((v) => v.id === id)) visibleBuildings.push(b);
+  }
+
+  return { units: visibleUnits, buildings: visibleBuildings };
+}
+
 setInterval(() => {
   for (const bot of bots) bot.update();
   sim.step();
@@ -193,10 +243,16 @@ setInterval(() => {
   const supply = sim.snapshotSupply();
   const tracers = [...sim.tracers];
   for (const [id, ws] of clients) {
+    // Filtered server-side rather than hidden by the renderer: a modified
+    // client must not be able to see through the fog.
+    const view = viewFor(id, units, buildings);
     send(ws, {
-      t: "snap", tick: sim.tick, units, buildings, supply, tracers,
+      t: "snap", tick: sim.tick,
+      units: view.units, buildings: view.buildings,
+      supply, tracers,
       economy: sim.economy(id),
       eliminated: [...sim.eliminated],
+      vision: sim.visionSources(id),
     });
   }
 }, 1000 / TICK_RATE);

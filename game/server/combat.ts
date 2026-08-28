@@ -46,6 +46,39 @@ export function rangeTo(
 }
 
 /**
+ * Everything caught in a splash, with its share of the damage.
+ *
+ * Falls off linearly from full at the centre to `minFraction` at the edge.
+ * Only enemies are included: friendly fire is a real mechanic but it needs an
+ * AI that understands it, and an AI that shells its own army is worse than no
+ * splash at all.
+ */
+export function splashTargets(
+  weapon: WeaponDef,
+  impact: { x: number; y: number },
+  attackerOwner: number,
+  candidates: Iterable<Combatant>,
+  isEnemy: (a: number, b: number) => boolean,
+): Array<{ target: Combatant; fraction: number }> {
+  const splash = weapon.splash;
+  if (!splash) return [];
+
+  const out: Array<{ target: Combatant; fraction: number }> = [];
+  for (const c of candidates) {
+    if (c.hp <= 0) continue;
+    if (!isEnemy(attackerOwner, c.owner)) continue;
+    if (!canHarm(weapon, c.armour)) continue;
+
+    const d = Math.max(0, Math.hypot(c.x - impact.x, c.y - impact.y) - c.radius);
+    if (d > splash.radius) continue;
+
+    const t = splash.radius <= 0 ? 0 : d / splash.radius;
+    out.push({ target: c, fraction: 1 - t * (1 - splash.minFraction) });
+  }
+  return out;
+}
+
+/**
  * Pick the best target within reach.
  *
  * Nearest-first. Deliberately not cleverer than that: focus-fire and threat

@@ -175,3 +175,50 @@ Worth recording because each looked like a real defect at first glance.
 Claude: `npm test` now runs sim tests, the gameplay audit, then the browser
 end-to-end check. `npm run selfplay` and `npm run ablate` are separate because
 they take minutes, not seconds.
+
+Claude: Added fog of war. Filtering is server-side, not a renderer effect — a
+modified client must not be able to see through it. The server sends each
+player only the units they can see, plus *remembered* enemy buildings, because
+buildings do not walk away and every RTS lets you keep seeing a scouted base.
+Units get no such memory: an army you cannot see is genuinely gone.
+
+Claude: The client rasterises fog from the vision circles the server sends
+rather than receiving a bitmap — a 112x112 grid at 15Hz is far more bandwidth
+than a handful of positions. Fog rectangles are merged into row runs before
+drawing; a 96x96 map is over nine thousand tiles and one rect each would cost
+more than the rest of the frame.
+
+Claude: `Sim.visionSources()` is now the single definition of sight, used by
+both the AI's enemy model and the snapshot filter. Two definitions would drift
+and the AI would quietly end up seeing more than a human in its position.
+`AIPlayer.intel()` exposes what the AI believes, so "fog-respecting" is tested
+rather than claimed: it stays blind to a distant enemy and learns the moment
+one walks into sight.
+
+Claude: Added splash damage (linear falloff to a floor fraction) and used it to
+give weapons real identities. Splash hits enemies only — friendly fire is a
+genuine mechanic but it needs an AI that understands it, and an AI that shells
+its own army is worse than no splash at all.
+
+Claude: Three defence structures now counter different things, which is the
+"defence 1 beats X, defence 2 beats Y" the design asked for, and it is
+measured: a Gun Nest clears six riflemen in 160 ticks where a Cannon Tower
+takes 663, and a Cannon Tower kills two tanks in 429 ticks where a Gun Nest
+*never* can. Added Artillery: long range, heavy splash, helpless if reached.
+
+Claude: ISSUE FOUND AND FIXED — the browser end-to-end tests observed the world
+through a second WebSocket. Fog broke that, correctly: a fresh connection joins
+as a different player who can only see their own units. The tests now read the
+client's own received view via a `window.__rts` debug hook, which is the more
+honest check anyway since it verifies what a player actually receives.
+
+Claude: Generated `game/assets/atlas.png` and `atlas.json` — every terrain,
+building, unit and overlay in one labelled grid with footprints and costs, for
+redrawing. Honest caveat: the placeholder art repeats. All eight buildings
+share one shape, and units share three between them. The grid, labels and
+manifest are the real deliverable; the pictures are a starting point.
+
+Claude: Gameplay audit now at **37 working, 0 broken, 6 not implemented**.
+Remaining gaps: aircraft (armour class, flak and AA battery all exist, nothing
+flies yet), lobby UI, save/replays, sound, veterancy/stealth, and the atlas is
+not yet wired into the renderer.

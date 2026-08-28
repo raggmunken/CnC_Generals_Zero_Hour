@@ -6,7 +6,7 @@
  * testable, and lets self-play run thousands of games by calling step() in a
  * loop with no clients attached.
  */
-import { acquireTarget, canHarm, damageFor, rangeTo, type Combatant } from "./combat.js";
+import { acquireTarget, canHarm, damageFor, rangeTo, splashTargets, type Combatant } from "./combat.js";
 import { findPath, smoothPath } from "./pathfind.js";
 import {
   BUILDINGS,
@@ -346,6 +346,26 @@ export class Sim {
     return ta !== tb;
   }
 
+  /**
+   * Points from which a player sees, with their sight radius.
+   *
+   * Shared by the AI's enemy model and by snapshot filtering, so what the AI
+   * is allowed to know and what a human client is sent come from exactly one
+   * definition of vision rather than two that can drift apart.
+   */
+  visionSources(playerId: number): Array<{ x: number; y: number; vision: number }> {
+    const eyes: Array<{ x: number; y: number; vision: number }> = [];
+    for (const u of this.units.values()) {
+      if (u.owner === playerId) eyes.push({ x: u.x, y: u.y, vision: unitDef(u.type).vision });
+    }
+    for (const b of this.buildings.values()) {
+      if (b.owner !== playerId) continue;
+      const d = buildingDef(b.type);
+      eyes.push({ x: b.x + d.size / 2, y: b.y + d.size / 2, vision: d.vision });
+    }
+    return eyes;
+  }
+
   /** Everything shootable, flattened for the combat helpers. */
   private *combatants(): Generator<Combatant> {
     for (const u of this.units.values()) {
@@ -433,7 +453,7 @@ export class Sim {
         continue;
       }
 
-      this.fire(u.x, u.y, weapon, target, u);
+      this.fire(u.x, u.y, weapon, target, u, u.owner);
     }
 
     for (const b of this.buildings.values()) {
@@ -449,7 +469,7 @@ export class Sim {
         isEnemy,
         def.weapon.range,
       );
-      if (target) this.fire(cx, cy, def.weapon, target, b);
+      if (target) this.fire(cx, cy, def.weapon, target, b, b.owner);
     }
   }
 
@@ -460,9 +480,27 @@ export class Sim {
     weapon: WeaponDef,
     target: Combatant,
     shooter: { cooldown?: number },
+    owner: number,
   ): void {
     if (shooter.cooldown && shooter.cooldown > 0) return;
-    this.applyDamage(target, damageFor(weapon, target.armour));
+
+    if (weapon.splash) {
+      // The direct target takes full damage as part of the splash pass, so it
+      // is not hit twice.
+      const caught = splashTargets(
+        weapon,
+        { x: target.x, y: target.y },
+        owner,
+        this.combatants(),
+        (a, b) => this.isEnemy(a, b),
+      );
+      for (const { target: c, fraction } of caught) {
+        this.applyDamage(c, damageFor(weapon, c.armour) * fraction);
+      }
+    } else {
+      this.applyDamage(target, damageFor(weapon, target.armour));
+    }
+
     shooter.cooldown = Math.max(1, Math.round(weapon.reload * TICK_RATE));
     this.tracers.push({ x0: x, y0: y, x1: target.x, y1: target.y });
   }

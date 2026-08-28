@@ -296,6 +296,69 @@ function run(sim: Sim, seconds: number): void {
   check("an unreachable order does not break the unit", u.x < 16 && Number.isFinite(u.x), `x=${u.x.toFixed(1)}`);
 }
 
+// -- splash and weapon roles ----------------------------------------------
+{
+  // Artillery lands on a crowd: every unit in the blast takes damage, not one.
+  const sim = flatSim(2);
+  const crowd = [0, 1, 2, 3].map((i) => sim.spawnUnit(1, "infantry", 30 + i * 0.7, 20));
+  sim.spawnUnit(0, "artillery", 20, 20);
+  run(sim, 6);
+  const hurt = crowd.filter((u) => !sim.units.has(u.id) || u.hp < 100).length;
+  check("splash damages a whole cluster", hurt >= 3, `${hurt}/4 hit`);
+}
+{
+  // ...where a single-target weapon of similar reach hits exactly one.
+  const sim = flatSim(2);
+  const crowd = [0, 1, 2, 3].map((i) => sim.spawnUnit(1, "infantry", 26 + i * 0.7, 20));
+  sim.spawnUnit(0, "tank", 20, 20);
+  run(sim, 2);
+  const hurt = crowd.filter((u) => !sim.units.has(u.id) || u.hp < 100).length;
+  check("a single-target weapon hits one", hurt <= 1, `${hurt}/4 hit`);
+}
+{
+  // The two ground turrets must genuinely prefer different prey: this is the
+  // "defence 1 counters X, defence 2 counters Y" the design asks for.
+  function survivalTicks(defence: string, attacker: string, count: number): number {
+    const sim = flatSim(2);
+    // Turrets sit behind the tech tree, so stand the prerequisites up first.
+    sim.economy(1).credits = 99999;
+    for (const [type, x, y] of [
+      ["command_center", 40, 40],
+      ["barracks", 46, 40],
+      ["war_factory", 50, 40],
+    ] as const) {
+      const b = sim.placeBuilding(1, type, x, y);
+      if (b) b.buildRemaining = 0;
+    }
+    const d = sim.placeBuilding(1, defence, 30, 20)!;
+    d.buildRemaining = 0;
+    const atk = [];
+    for (let i = 0; i < count; i++) atk.push(sim.spawnUnit(0, attacker, 25 + i * 0.8, 20));
+    for (let t = 0; t < 90 * TICK_RATE; t++) {
+      sim.step();
+      if (atk.every((u) => !sim.units.has(u.id))) return t;
+    }
+    return Infinity;
+  }
+
+  // Equal money against each turret: $1200 of infantry, $1600 of tanks.
+  const gunVsInf = survivalTicks("gun_turret", "infantry", 6);
+  const cannonVsInf = survivalTicks("cannon_turret", "infantry", 6);
+  const gunVsTank = survivalTicks("gun_turret", "tank", 2);
+  const cannonVsTank = survivalTicks("cannon_turret", "tank", 2);
+
+  check(
+    "gun nest clears infantry faster than a cannon tower",
+    gunVsInf < cannonVsInf,
+    `gun=${gunVsInf} cannon=${cannonVsInf} ticks`,
+  );
+  check(
+    "cannon tower kills armour faster than a gun nest",
+    cannonVsTank < gunVsTank,
+    `cannon=${cannonVsTank} gun=${gunVsTank} ticks`,
+  );
+}
+
 // -- map presets -----------------------------------------------------------
 {
   for (const players of [2, 3, 4, 5, 6]) {
