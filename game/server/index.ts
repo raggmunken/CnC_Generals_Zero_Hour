@@ -237,7 +237,7 @@ wss.on("connection", (ws) => {
     } else if (msg.t === "train" && typeof msg.buildingId === "number") {
       sim.queueUnit(playerId, msg.buildingId, msg.unitType);
     } else if (msg.t === "order" && Array.isArray(msg.unitIds)) {
-      sim.issueOrder(playerId, msg.unitIds, msg.order);
+      sim.issueOrder(playerId, msg.unitIds, msg.order, msg.append === true);
     } else if (msg.t === "rally" && typeof msg.buildingId === "number") {
       sim.setRally(playerId, msg.buildingId, msg.x, msg.y);
     } else if (msg.t === "newMatch") {

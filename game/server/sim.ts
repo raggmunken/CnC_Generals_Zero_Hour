@@ -306,26 +306,66 @@ export class Sim {
   }
 
   /** Give an order to units we own. Rejects anything malformed outright. */
-  issueOrder(playerId: number, unitIds: number[], order: Order): void {
-    if (order.kind !== "attack" && (!Number.isFinite(order.x) || !Number.isFinite(order.y))) {
+  issueOrder(playerId: number, unitIds: number[], order: Order, append = false): void {
+    if (order.kind !== "attack" && order.kind !== "stop" && (!Number.isFinite(order.x) || !Number.isFinite(order.y))) {
       return;
     }
 
     for (const id of unitIds) {
       const u = this.units.get(id);
       if (!u || u.owner !== playerId) continue;
-      u.order = order;
-      if (order.kind === "attack") {
+      if (order.kind === "stop") {
+        // Halt where the unit stands. It still fires on anything in range --
+        // stop is not a ceasefire -- but it neither moves nor chases, and a
+        // harvester is taken off its job entirely.
+        u.order = undefined;
+        u.queue = undefined;
         u.targetX = null;
         u.targetY = null;
         this.clearPath(u);
-      } else {
-        this.setDestination(u, order.x, order.y);
+        u.auto = false;
+        delete u.harvest;
+        delete u.nodeId;
+        continue;
       }
+      if (append && u.order !== undefined) {
+        // Shift-queue: run this after whatever the unit is already doing.
+        if ((u.queue?.length ?? 0) < 8) (u.queue ??= []).push(order);
+        u.auto = false;
+        continue;
+      }
+      u.queue = undefined;
+      this.applyOrder(u, order);
       // A direct order takes a harvester off automatic, so it stays where it
       // was sent instead of immediately wandering back to the nearest pile.
       u.auto = false;
     }
+  }
+
+  /** Set a unit's current order and aim it at the first leg. */
+  private applyOrder(u: Unit, order: Order): void {
+    u.order = order;
+    if (order.kind === "attack") {
+      u.targetX = null;
+      u.targetY = null;
+      this.clearPath(u);
+    } else if (order.kind !== "stop") {
+      this.setDestination(u, order.x, order.y);
+    }
+  }
+
+  /**
+   * Move a unit on to its next queued order, if any. Returns whether there
+   * was one. Queued orders were ownership-checked when they were queued.
+   */
+  private advanceQueue(u: Unit): boolean {
+    const next = u.queue?.shift();
+    if (!next) {
+      u.queue = undefined;
+      return false;
+    }
+    this.applyOrder(u, next);
+    return true;
   }
 
   /** Set where a building sends what it produces. */
@@ -423,7 +463,7 @@ export class Sim {
         if (!target || target.hp <= 0 || !canHarm(weapon, target.armour)) {
           // The target died or was never valid. Clearing the order matters:
           // left in place it pins the unit chasing a corpse forever.
-          u.order = undefined;
+          if (!this.advanceQueue(u)) u.order = undefined;
           target = null;
         } else if (rangeTo(u, target) > weapon.range) {
           // Close the distance rather than firing into nothing.
@@ -502,7 +542,7 @@ export class Sim {
     }
 
     shooter.cooldown = Math.max(1, Math.round(weapon.reload * TICK_RATE));
-    this.tracers.push({ x0: x, y0: y, x1: target.x, y1: target.y });
+    this.tracers.push({ x0: x, y0: y, x1: target.x, y1: target.y, weapon: weapon.damageType });
   }
 
   /** Remove anything reduced to zero, and clear orders that pointed at it. */
@@ -524,9 +564,11 @@ export class Sim {
       if (u.order?.kind !== "attack") continue;
       const gone = u.order.targetKind === "unit" ? deadU.has(u.order.targetId) : deadB.has(u.order.targetId);
       if (gone) {
-        u.order = undefined;
-        u.targetX = null;
-        u.targetY = null;
+        if (!this.advanceQueue(u)) {
+          u.order = undefined;
+          u.targetX = null;
+          u.targetY = null;
+        }
       }
     }
   }
@@ -861,6 +903,10 @@ export class Sim {
       u.targetX = null;
       u.targetY = null;
       this.clearPath(u);
+      // A completed leg chains into the next queued order, if one exists.
+      if (u.order?.kind === "move" || u.order?.kind === "attackMove") {
+        if (!this.advanceQueue(u) && u.order.kind === "move") u.order = undefined;
+      }
       return;
     }
 
