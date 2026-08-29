@@ -169,5 +169,5 @@ line of HUD text.
 `npm test` runs all three suites -- headless simulation tests, the gameplay
 audit, then the browser end-to-end check.
 
-Next: sound (nothing is audible yet), aircraft (the armour class, flak weapons
-and AA battery exist, but no unit flies), save/load and replays.
+Next: aircraft (the armour class, flak weapons and AA battery exist, but no
+unit flies), save/load and replays.

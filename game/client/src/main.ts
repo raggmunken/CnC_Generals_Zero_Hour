@@ -1008,6 +1008,7 @@ renderer.app.ticker.add(() => {
     effects: renderer.effectCount,
     endState,
     audioLoaded: audio.loadedCount,
+    audioStats: audio.debugStats(),
   };
 
   // Age out tracers, then draw what is left with a linear fade.

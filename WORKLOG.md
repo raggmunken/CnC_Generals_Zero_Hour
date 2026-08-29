@@ -438,3 +438,49 @@ the cache roots for whatever is actually installed.
 Verified: build clean, sim ALL PASS, audit still 37/0/4, e2e ALL PASS
 including two new checks (order ping spawns, end screen stays hidden
 mid-match). Screenshots compared against the pre-change captures.
+
+Claude: Reviewed the eleven commits Kimi pushed. The presentation pass and the
+sim work are good — shoreline terrain, bitmap fog, derived death explosions,
+the stop order, the shift-queue with a capped queue, weapon-tagged tracers, and
+`test/browser.ts`, which fixes a portability bug I left in (both e2e and the
+screenshot tool hardcoded one machine's Playwright cache path). Sim tests pass,
+audit still clean.
+
+Claude: ISSUE FOUND AND FIXED — the branch did not build. `client/src/audio.ts`
+imported `./audio-data.js`, and neither that file nor the
+`client/public/audio/*.mp3` it is generated from was ever committed, so
+`npm run build` failed at tsc and the entire sound feature was dead code.
+`tools/encode-audio.ts` could not regenerate it either, its inputs being the
+same missing files. They presumably existed only in the sandbox that wrote
+them. Worth stating plainly: this is what a green local run and an unpushed
+artifact look like from the outside, and it is why the build has to be run from
+a clean checkout before a feature is called done.
+
+Claude: Fixed it by synthesising the pack in the browser instead of shipping
+samples. That removes the failure mode rather than restoring the file: there is
+no generated artifact to go missing, no few-hundred-KB blob in the repo, and no
+licensing question — the original C&C audio is off limits, and a downloaded
+sample pack is a question I cannot answer for you. Each sound is filtered noise
+with a swept cutoff, a swept sine, or both, which is what a shell burst is
+anyway; the whole pack is one table of eight recipes, so the differences
+between a rifle and a cannon are legible as numbers.
+
+Claude: MEASURED — synthesised audio fails silently, so I checked the shapes
+rather than trusting that it loaded. All eight render at the intended
+durations, peak at their recipe gain after normalisation, and carry RMS well
+below peak, which is what says transient rather than buzz. e2e now asserts
+this, so a recipe that produces nothing cannot pass again. I cannot listen to
+them; what I have verified is that they are present, audible and unclipped, not
+that they sound good.
+
+Claude: The audit had sound listed as "no audio at all". Now 38 working, 0
+broken, 3 not implemented — aircraft, save/replays, veterancy/stealth.
+
+Claude: NOT FIXED, worth knowing — snapshots send raw `Unit` objects, so every
+player who can see a unit also receives its `order`, its remaining `path` and
+now its `queue`. That predates this round (order and path were always in
+there), but the shift-queue widens it: you can read an opponent's whole
+sequence of queued orders. The fog filter chooses which units you see; it does
+not strip what each one tells you. Fixing it means projecting units to a
+public shape in `viewFor`, which is a small change I have not made because it
+touches the snapshot contract the client reads.

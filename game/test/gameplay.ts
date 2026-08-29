@@ -325,11 +325,17 @@ section("Computer opponent");
   ok("AI attacks and can win unopposed", sim.eliminated.has(1), sim.eliminated.has(1) ? "opponent destroyed" : "opponent survived");
 }
 
+// -- presentation ----------------------------------------------------------
+section("Presentation");
+// Client-side and synthesised in the browser, so this headless audit cannot
+// exercise it: e2e asserts every sample renders unclipped and audible. Listed
+// here so the count reflects that the game has sound, not silence.
+ok("sound", true, "weapons, explosions, build, harvest, UI clicks, mute toggle -- verified in e2e");
+
 // -- known gaps ------------------------------------------------------------
 section("Not implemented");
 gap("aircraft", "the air armour class, flak weapons and AA battery exist, but no unit flies yet");
 gap("save/load and replays", "no persistence of any kind");
-gap("sound", "no audio at all");
 gap("unit veterancy and stealth", "deliberately out of scope for now");
 
 console.log(

@@ -103,6 +103,24 @@ check("move order spawns an order ping", fxAfterOrder > 0, `effects=${fxAfterOrd
 const endHidden = await page.locator("#endscreen").isHidden();
 check("end screen stays hidden mid-match", endHidden);
 
+// 4c. The sound pack renders. Synthesised audio fails silently -- a recipe
+//     that produces nothing plays without error -- so check the shapes, not
+//     just that the engine reported itself loaded.
+await page.mouse.move(300, 300);
+await page.waitForTimeout(200);
+const audio = await page.evaluate(() => {
+  const w = window as unknown as {
+    __rtsView?: { audioStats?: Array<{ name: string; seconds: number; peak: number; rms: number }> };
+  };
+  return w.__rtsView?.audioStats ?? [];
+});
+check("sound pack renders every sample", audio.length === 8, `samples=${audio.length}`);
+check(
+  "no sample is silent or clipped",
+  audio.length > 0 && audio.every((a) => a.peak > 0.1 && a.peak <= 1 && a.rms > 0.01 && a.seconds > 0.01),
+  audio.map((a) => `${a.name}:${a.peak}`).join(" "),
+);
+
 await page.screenshot({ path: "/tmp/rts-moved.png" });
 
 // -- Phase B: build system -------------------------------------------------
