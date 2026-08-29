@@ -321,14 +321,92 @@ section("Computer opponent");
   ok("AI expands its base", mine.length >= 4, `${mine.map((b) => b.type).join(",")}`);
   ok("AI runs an economy", sim.economy(0).credits > 0 || mine.length >= 5, `$${sim.economy(0).credits}`);
   ok("AI builds an army", army.length > 0, `${army.length} combat units`);
+  ok(
+    "AI mixes aircraft into its army",
+    army.some((u) => u.type === "chopper"),
+    `${army.filter((u) => u.type === "chopper").length} choppers`,
+  );
 
   run(sim, 360, [bot]);
   ok("AI attacks and can win unopposed", sim.eliminated.has(1), sim.eliminated.has(1) ? "opponent destroyed" : "opponent survived");
 }
+{
+  // Counter-composition, shown rather than trusted: park a chopper where the
+  // AI can see it, and the production queues should answer with flak.
+  const sim = arena();
+  base(sim, 0, 10, 10);
+  sim.economy(0).credits = 99999;
+  for (const [type, x, y] of [["power_plant", 16, 8], ["barracks", 16, 12], ["war_factory", 20, 12]] as const) {
+    const b = sim.placeBuilding(0, type, x, y);
+    if (b) b.buildRemaining = 0;
+  }
+  const bot = new AIPlayer(sim, 0, "normal");
+  sim.spawnUnit(1, "chopper", 14, 12);
+  run(sim, 45, [bot]);
+  const aaFielded = [...sim.units.values()].some((u) => u.owner === 0 && u.type === "aa_vehicle");
+  const aaQueued = [...sim.buildings.values()].some(
+    (b) => b.owner === 0 && b.queue.some((q) => q.unitType === "aa_vehicle"),
+  );
+  const aaBuilt = [...sim.buildings.values()].some((b) => b.owner === 0 && b.type === "aa_turret");
+  ok("AI answers aircraft with flak", aaFielded || aaQueued || aaBuilt);
+}
+
+// -- aircraft --------------------------------------------------------------
+section("Aircraft");
+{
+  // A mountain wall with no gap at all. Ground must path around (and cannot),
+  // air goes straight over.
+  const size = 64;
+  const map = { width: size, height: size, tiles: new Uint8Array(size * size) };
+  map.tiles.fill(Terrain.Ground);
+  for (let y = 0; y < size; y++) map.tiles[y * size + 32] = Terrain.Mountain;
+  const sim = new Sim(map);
+  sim.addPlayer({ id: 0, name: "P", faction: "usa", team: 0 });
+  const chop = sim.spawnUnit(0, "chopper", 20, 10);
+  sim.issueMove(0, [chop.id], 44, 10);
+  run(sim, 20);
+  ok("aircraft fly straight over impassable terrain", chop.x > 34, `x=${chop.x.toFixed(1)}`);
+}
+{
+  const sim = arena();
+  const air = sim.spawnUnit(1, "chopper", 14, 10);
+  const tank = sim.spawnUnit(0, "tank", 10, 10);
+  sim.issueOrder(0, [tank.id], { kind: "attack", targetId: air.id, targetKind: "unit" });
+  run(sim, 6);
+  ok(
+    "cannons cannot engage air, and stop trying",
+    sim.units.get(air.id)?.hp === unitDef("chopper").maxHp && tank.order === undefined,
+  );
+}
+{
+  const sim = arena();
+  const air = sim.spawnUnit(1, "chopper", 13, 10);
+  sim.spawnUnit(0, "aa_vehicle", 10, 10);
+  run(sim, 30);
+  ok("flak shoots aircraft down", !sim.units.has(air.id));
+}
+{
+  const sim = arena();
+  base(sim, 0, 10, 10);
+  sim.economy(0).credits = 99999;
+  for (let i = 0; i < 3; i++) {
+    const p2 = sim.placeBuilding(0, "power_plant", 40 + i * 3, 44);
+    if (p2) p2.buildRemaining = 0;
+  }
+  const bar = sim.placeBuilding(0, "barracks", 40, 30)!;
+  bar.buildRemaining = 0;
+  const wf = sim.placeBuilding(0, "war_factory", 44, 30)!;
+  wf.buildRemaining = 0;
+  sim.queueUnit(0, wf.id, "chopper");
+  run(sim, 40);
+  ok(
+    "war factory delivers a chopper",
+    [...sim.units.values()].some((u) => u.type === "chopper" && u.owner === 0),
+  );
+}
 
 // -- known gaps ------------------------------------------------------------
 section("Not implemented");
-gap("aircraft", "the air armour class, flak weapons and AA battery exist, but no unit flies yet");
 gap("save/load and replays", "no persistence of any kind");
 gap("unit veterancy and stealth", "deliberately out of scope for now");
 

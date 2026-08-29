@@ -395,8 +395,15 @@ export class AIPlayer {
 
     for (const factory of this.myBuildings("war_factory")) {
       if (factory.queue.length >= 2) continue;
-      // Answer air the moment it is seen; otherwise tanks are the backbone.
-      const pick = wantAir ? "aa_vehicle" : "tank";
+      // Answer air the moment it is seen; otherwise tanks are the backbone,
+      // with choppers kept at a quarter of the vehicle fleet -- air mobility
+      // is too strong to leave on the table, and it forces the opponent's
+      // flak to be in two places at once.
+      const vehicles = this.myUnits().filter((u) =>
+        ["tank", "aa_vehicle", "artillery", "chopper"].includes(u.type)
+      );
+      const choppers = vehicles.filter((u) => u.type === "chopper").length;
+      const pick = wantAir ? "aa_vehicle" : choppers * 4 <= vehicles.length ? "chopper" : "tank";
       if (eco.credits >= UNITS[pick]!.cost) {
         this.sim.queueUnit(this.playerId, factory.id, pick);
       }
