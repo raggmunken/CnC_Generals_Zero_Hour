@@ -11,6 +11,9 @@ import { Terrain } from "../../shared/types.js";
 /** Screen pixels per world unit at zoom 1. */
 export const BASE_TILE_PX = 24;
 
+/** The transient effects the renderer knows how to draw. */
+export type EffectKind = "ping" | "attack" | "explosion" | "bigExplosion";
+
 /** Terrain enum -> atlas key. */
 const TERRAIN_SPRITE: Record<number, string> = {
   [Terrain.Ground]: "terrain.ground",
@@ -40,12 +43,20 @@ export class Renderer {
   private terrainLayer = new Graphics();
   /** Terrain baked into one texture; see buildTerrain. */
   private terrainSprite = new Sprite();
+  /** Soft shadows, drawn under everything mobile or built. */
+  private shadowLayer = new Graphics();
   private supplyLayer = new Graphics();
   private buildingLayer = new Graphics();
   private rangeLayer = new Graphics();
   private unitLayer = new Graphics();
   private fxLayer = new Graphics();
-  private fogLayer = new Graphics();
+  /**
+   * Fog is a low-res bitmap (one pixel per tile) upscaled with bilinear
+   * filtering, so the edge of vision feathers instead of stepping tile by
+   * tile. Rect-drawn fog on a 96x96 map was both chunkier and slower.
+   */
+  private fogCanvas: HTMLCanvasElement | null = null;
+  private fogSprite = new Sprite();
 
   /** Sub-textures cut from the sheet, keyed as in atlas.json. */
   private atlas = new Map<string, Texture>();
@@ -71,6 +82,15 @@ export class Renderer {
   private facing = new Map<number, { x: number; y: number; a: number }>();
   private overlay = new Graphics();
 
+  /**
+   * Short-lived visual effects: order pings, muzzle flashes, explosions.
+   *
+   * Purely client-side and derived from snapshot diffs rather than sent by the
+   * server -- a unit that vanishes from a visible tile blew up, and no wire
+   * field can say that better than the disappearance already does.
+   */
+  private effects: Array<{ kind: EffectKind; x: number; y: number; born: number; size: number }> = [];
+
   camX = 0;
   camY = 0;
   zoom = 1;
@@ -87,6 +107,7 @@ export class Renderer {
     this.world.addChild(
       this.terrainLayer,
       this.terrainSprite,
+      this.shadowLayer,
       this.supplyLayer,
       this.supplyContainer,
       this.buildingLayer,
@@ -96,7 +117,7 @@ export class Renderer {
       this.unitLayer,
       this.unitContainer,
       this.fxLayer,
-      this.fogLayer,
+      this.fogSprite,
     );
     this.app.stage.addChild(this.world, this.overlay);
   }
@@ -179,10 +200,120 @@ export class Renderer {
         ctx.drawImage(this.sheet, cell.x, cell.y, cell.w, cell.h, x * TP, y * TP, TP, TP);
       }
     }
+
+    this.blendTerrain(ctx, width, height, tiles, TP);
+
     this.terrainSprite.texture = Texture.from(canvas);
     this.terrainSprite.scale.set(1 / TP);
     this.terrainSprite.visible = true;
     if (old && old !== Texture.EMPTY) old.destroy(true);
+  }
+
+  /**
+   * Soften the tile grid baked above.
+   *
+   * Three passes, all deterministic in the tile coordinates so a rebuild after
+   * a restart draws the same map:
+   *
+   * 1. Per-tile brightness jitter. One texture repeated ten thousand times
+   *    reads as wallpaper; a whisper of variation per tile reads as ground.
+   * 2. Seam gradients. Where two different kinds meet, each side bleeds a few
+   *    pixels of the other's colour across the boundary, so biomes grade into
+   *    each other instead of snapping at a pixel line.
+   * 3. Shorelines. Water meeting land gets a shallow tint on the water side
+   *    and a sand band on the land side -- the strongest single cue that a
+   *    river is a river and not a blue corridor.
+   */
+  private blendTerrain(
+    ctx: CanvasRenderingContext2D,
+    width: number,
+    height: number,
+    tiles: number[],
+    TP: number,
+  ): void {
+    const at = (x: number, y: number): number =>
+      x < 0 || y < 0 || x >= width || y >= height ? -1 : (tiles[y * width + x] ?? Terrain.Ground);
+    const css = (c: number, a: number): string =>
+      `rgba(${(c >> 16) & 255},${(c >> 8) & 255},${c & 255},${a})`;
+
+    // 1. Jitter, at quarter-tile grain: per-tile jitter correlates with the
+    //    grid and reads as checkerboard; finer blocks break that up.
+    const SUB = 4;
+    const step = TP / SUB;
+    for (let y = 0; y < height * SUB; y++) {
+      for (let x = 0; x < width * SUB; x++) {
+        let h = (x * 73856093) ^ (y * 19349663);
+        h = (h ^ (h >> 13)) * 0x5bd1e995;
+        const v = (((h >>> 0) % 100) / 100) * 2 - 1; // [-1, 1)
+        ctx.fillStyle = v < 0 ? `rgba(0,0,0,${-v * 0.03})` : `rgba(255,255,255,${v * 0.022})`;
+        ctx.fillRect(x * step, y * step, step, step);
+      }
+    }
+
+    // 2 + 3. Walk every interior edge once.
+    const DIRS: Array<[number, number, string]> = [
+      [1, 0, "E"], [0, 1, "S"], // W and N are the same seams from the other side
+    ];
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const here = at(x, y);
+        for (const [dx, dy] of DIRS) {
+          const there = at(x + dx, y + dy);
+          if (there < 0 || there === here) continue;
+
+          const horizontal = dx === 1; // seam between (x,y) and (x+dx,y+dy)
+          // Canvas coordinates of the seam line.
+          const sx = horizontal ? (x + 1) * TP : x * TP;
+          const sy = horizontal ? y * TP : (y + 1) * TP;
+
+          const waterEdge = here === Terrain.Water || there === Terrain.Water;
+          const band = waterEdge ? TP * 0.42 : TP * 0.3;
+
+          for (const [, to, flip] of [[here, there, 0], [there, here, 1]] as const) {
+            const g = horizontal
+              ? ctx.createLinearGradient(sx + (flip ? band : -band), 0, sx, 0)
+              : ctx.createLinearGradient(0, sy + (flip ? band : -band), 0, sy);
+            // Bleed the *neighbour's* colour across the seam, so each side
+            // grades into what is next to it.
+            const color = TERRAIN_COLOR[to] ?? 0;
+            const strength = waterEdge ? 0.45 : 0.3;
+            g.addColorStop(0, css(color, 0));
+            g.addColorStop(1, css(color, strength));
+            ctx.fillStyle = g;
+            if (horizontal) {
+              ctx.fillRect(flip ? sx : sx - band, sy, band, TP);
+            } else {
+              ctx.fillRect(sx, flip ? sy : sy - band, TP, band);
+            }
+          }
+
+          if (waterEdge) {
+            // Sand band on the land side, shallow tint on the water side.
+            const landFlip = here === Terrain.Water ? 1 : 0; // side holding land
+            const sand = TP * 0.22;
+            const sg = horizontal
+              ? ctx.createLinearGradient(sx + (landFlip ? sand : -sand), 0, sx, 0)
+              : ctx.createLinearGradient(0, sy + (landFlip ? sand : -sand), 0, sy);
+            sg.addColorStop(0, "rgba(178,164,110,0)");
+            sg.addColorStop(1, "rgba(178,164,110,0.5)");
+            ctx.fillStyle = sg;
+            if (horizontal) ctx.fillRect(landFlip ? sx : sx - sand, sy, sand, TP);
+            else ctx.fillRect(sx, landFlip ? sy : sy - sand, TP, sand);
+
+            const sh = TP * 0.3;
+            const waterFlip = here === Terrain.Water ? 0 : 1; // side holding water
+            const wg = horizontal
+              ? ctx.createLinearGradient(sx + (waterFlip ? sh : -sh), 0, sx, 0)
+              : ctx.createLinearGradient(0, sy + (waterFlip ? sh : -sh), 0, sy);
+            wg.addColorStop(0, "rgba(120,180,190,0)");
+            wg.addColorStop(1, "rgba(120,180,190,0.4)");
+            ctx.fillStyle = wg;
+            if (horizontal) ctx.fillRect(waterFlip ? sx : sx - sh, sy, sh, TP);
+            else ctx.fillRect(sx, waterFlip ? sy : sy - sh, TP, sh);
+          }
+        }
+      }
+    }
   }
 
   /** World coordinates -> screen pixels. */
@@ -208,6 +339,8 @@ export class Renderer {
   drawSupply(nodes: Array<{ id: number; x: number; y: number; amount: number; max: number }>): void {
     const g = this.supplyLayer;
     g.clear();
+    // First draw call of every frame, so it owns clearing the shadow pass.
+    this.shadowLayer.clear();
     const tex = this.atlas.get("overlay.supply");
     const live = new Set<number>();
     for (const n of nodes) {
@@ -247,6 +380,11 @@ export class Renderer {
     this.reap(this.buildingSprites, live);
     for (const b of buildings) {
       const color = PLAYER_COLOR[b.owner % PLAYER_COLOR.length]!;
+
+      // Anchoring shadow: without one the sprite floats over the terrain.
+      this.shadowLayer.ellipse(
+        b.x + b.size / 2 + 0.22, b.y + b.size - 0.05, b.size * 0.55, b.size * 0.16,
+      ).fill({ color: 0x000000, alpha: 0.3 });
 
       const tex = this.atlas.get(`building.${b.type}`);
       const sp = tex
@@ -357,6 +495,11 @@ export class Renderer {
       live.add(u.id);
       const color = PLAYER_COLOR[u.owner % PLAYER_COLOR.length]!;
 
+      // A unit without a shadow reads as floating; offset down-right so the
+      // light appears to come from up-left, matching the art's shading.
+      this.shadowLayer.ellipse(u.x + 0.14, u.y + u.radius * 0.55, u.radius * 0.95, u.radius * 0.42)
+        .fill({ color: 0x000000, alpha: 0.26 });
+
       if (selected.has(u.id) && ring) {
         // The drawn ring, not a filled disc: at this sprite size a disc large
         // enough to be seen is large enough to hide the unit standing on it.
@@ -431,7 +574,12 @@ export class Renderer {
     for (const t of tracers) {
       g.moveTo(t.x0, t.y0).lineTo(t.x1, t.y1)
         .stroke({ color: 0xffe9a3, width: 0.07, alpha: t.alpha });
+      // Muzzle flash at the origin, impact spark where it lands: the line
+      // alone reads as a ruler, not a shot.
+      g.circle(t.x0, t.y0, 0.2).fill({ color: 0xfff3c4, alpha: t.alpha * 0.9 });
+      g.circle(t.x1, t.y1, 0.14).fill({ color: 0xffb35c, alpha: t.alpha });
     }
+    this.drawEffects(performance.now());
   }
 
   /** A health bar above anything damaged. Full-health things stay uncluttered. */
@@ -457,37 +605,96 @@ export class Renderer {
   /**
    * Draw the fog of war.
    *
+   * Rendered as one pixel per tile into a canvas, then upscaled to map size
+   * with bilinear filtering -- the feathered edge falls out of the upscale for
+   * free, where the old rectangle pass stepped hard at every tile boundary.
    * Two states: never seen is opaque, seen but not currently observed is dim
-   * so remembered terrain and buildings stay readable. Rectangles are merged
-   * into row runs first -- a 96x96 map is over nine thousand tiles, and
-   * emitting one rect each would cost more than the rest of the frame.
+   * so remembered terrain and buildings stay readable.
    */
   drawFog(width: number, height: number, explored: Uint8Array, visible: Uint8Array): void {
-    const g = this.fogLayer;
-    g.clear();
+    if (!this.fogCanvas || this.fogCanvas.width !== width || this.fogCanvas.height !== height) {
+      this.fogCanvas = document.createElement("canvas");
+      this.fogCanvas.width = width;
+      this.fogCanvas.height = height;
+      const tex = Texture.from(this.fogCanvas);
+      tex.source.scaleMode = "linear";
+      this.fogSprite.texture = tex;
+      this.fogSprite.width = width;
+      this.fogSprite.height = height;
+    }
+    const ctx = this.fogCanvas.getContext("2d");
+    if (!ctx) return;
+    const img = ctx.createImageData(width, height);
+    const d = img.data;
+    for (let i = 0; i < width * height; i++) {
+      if (visible[i]) continue;
+      const a = explored[i] ? 115 : 255;
+      d[i * 4] = 5;
+      d[i * 4 + 1] = 7;
+      d[i * 4 + 2] = 10;
+      d[i * 4 + 3] = a;
+    }
+    ctx.putImageData(img, 0, 0);
+    this.fogSprite.texture.source.update();
+  }
 
-    for (let y = 0; y < height; y++) {
-      let runStart = -1;
-      let runKind = 0; // 1 = unexplored, 2 = explored but not visible
+  /** Queue a visual effect; see this.effects for why these are client-side. */
+  spawnEffect(kind: EffectKind, x: number, y: number, size = 1): void {
+    this.effects.push({ kind, x, y, born: performance.now(), size });
+    // A stuck client should not accumulate effects forever.
+    if (this.effects.length > 300) this.effects.splice(0, this.effects.length - 300);
+  }
 
-      const flush = (endX: number) => {
-        if (runStart < 0) return;
-        const alpha = runKind === 1 ? 1 : 0.45;
-        g.rect(runStart, y, endX - runStart, 1).fill({ color: 0x05070a, alpha });
-        runStart = -1;
-      };
+  /** Exposed for tests: how many effects are alive right now. */
+  get effectCount(): number {
+    return this.effects.length;
+  }
 
-      for (let x = 0; x < width; x++) {
-        const i = y * width + x;
-        const kind = !explored[i] ? 1 : visible[i] ? 0 : 2;
-        if (kind !== runKind) {
-          flush(x);
-          runKind = kind;
-          if (kind !== 0) runStart = x;
+  /** Render order pings and explosions into the fx layer. */
+  private drawEffects(now: number): void {
+    const g = this.fxLayer;
+    const live: typeof this.effects = [];
+    for (const e of this.effects) {
+      const age = now - e.born;
+      if (e.kind === "ping" || e.kind === "attack") {
+        const dur = 420;
+        if (age < dur) {
+          live.push(e);
+          const t = age / dur;
+          const color = e.kind === "ping" ? 0x9fe870 : 0xe05a4a;
+          // Ring closes inward on the target point -- an order lands somewhere.
+          const r = 0.25 + (1 - t) * 1.1;
+          g.circle(e.x, e.y, r).stroke({ color, width: 0.1, alpha: 0.3 + 0.7 * (1 - t) });
+          if (e.kind === "attack") {
+            const c = 0.18;
+            g.moveTo(e.x - c, e.y - c).lineTo(e.x + c, e.y + c)
+              .moveTo(e.x - c, e.y + c).lineTo(e.x + c, e.y - c)
+              .stroke({ color, width: 0.09, alpha: 0.9 * (1 - t) });
+          }
+        }
+      } else if (e.kind === "explosion" || e.kind === "bigExplosion") {
+        const big = e.kind === "bigExplosion";
+        const dur = big ? 750 : 500;
+        if (age < dur) {
+          live.push(e);
+          const t = age / dur;
+          const s = e.size * (big ? 1.6 : 1);
+          // Flash core, then a ring outrunning it, then smoke drifting up.
+          if (t < 0.35) {
+            const ft = t / 0.35;
+            g.circle(e.x, e.y, s * (0.4 + ft * 1.1)).fill({ color: 0xffe9a3, alpha: 0.85 * (1 - ft) });
+          }
+          g.circle(e.x, e.y, s * (0.3 + t * 2.4))
+            .stroke({ color: 0xff9a4d, width: 0.14 * (1 - t) + 0.03, alpha: 0.8 * (1 - t) });
+          for (let k = 0; k < 3; k++) {
+            const a = (k / 3) * Math.PI * 2 + e.x; // deterministic per site
+            g.circle(e.x + Math.cos(a) * s * t * 0.9, e.y + Math.sin(a) * s * t * 0.9 - t * 0.5 * s, s * 0.34)
+              .fill({ color: 0x3a3733, alpha: 0.4 * (1 - t) });
+          }
         }
       }
-      flush(width);
     }
+    this.effects = live;
   }
 
   /** Screen-space overlay: the selection box. */

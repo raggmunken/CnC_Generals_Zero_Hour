@@ -6,10 +6,11 @@
  * (`npm run server`); writes a zoomed-in and a zoomed-out frame.
  */
 import { chromium } from "playwright";
+import { findChromium } from "../test/browser.js";
 
 const URL = process.env.GAME_URL ?? "http://127.0.0.1:8090/";
 const browser = await chromium.launch({
-  executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
+  executablePath: findChromium(),
   args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader"],
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
