@@ -441,5 +441,40 @@ function reachable(map: { width: number; height: number; tiles: Uint8Array }, fr
   return seen;
 }
 
+// -- stop and queued orders ---------------------------------------------------
+{
+  const sim = flatSim();
+  const u = sim.spawnUnit(0, "infantry", 10, 10);
+  sim.issueOrder(0, [u.id], { kind: "move", x: 50, y: 10 });
+  run(sim, 1);
+  sim.issueOrder(0, [u.id], { kind: "stop" });
+  const xAt = u.x;
+  run(sim, 2);
+  check("stop halts a moving unit", Math.abs(u.x - xAt) < 0.01 && u.order === undefined, `x=${u.x.toFixed(2)} vs ${xAt.toFixed(2)}`);
+}
+{
+  // Shift-queue: two moves in sequence, the second starting only once the
+  // first has actually been reached.
+  const sim = flatSim();
+  const u = sim.spawnUnit(0, "infantry", 10, 10);
+  sim.issueOrder(0, [u.id], { kind: "move", x: 20, y: 10 });
+  sim.issueOrder(0, [u.id], { kind: "move", x: 20, y: 30 }, true);
+  check("queued order waits", u.queue?.length === 1);
+  run(sim, 20);
+  check("queued order ran after the first", Math.abs(u.x - 20) < 0.5 && Math.abs(u.y - 30) < 0.5, `at ${u.x.toFixed(1)},${u.y.toFixed(1)}`);
+  check("queue empties when done", (u.queue?.length ?? 0) === 0);
+}
+{
+  // A plain order replaces the queue rather than appending to it.
+  const sim = flatSim();
+  const u = sim.spawnUnit(0, "infantry", 10, 10);
+  sim.issueOrder(0, [u.id], { kind: "move", x: 20, y: 10 });
+  sim.issueOrder(0, [u.id], { kind: "move", x: 60, y: 60 }, true);
+  sim.issueOrder(0, [u.id], { kind: "move", x: 40, y: 10 });
+  check("new order discards the queue", (u.queue?.length ?? 0) === 0);
+  run(sim, 20);
+  check("unit went to the replacement order", Math.abs(u.x - 40) < 0.5 && Math.abs(u.y - 10) < 0.5, `at ${u.x.toFixed(1)},${u.y.toFixed(1)}`);
+}
+
 console.log(`\nRESULT: ${failures.length === 0 ? "ALL PASS" : `FAILURES: ${failures.join(", ")}`}`);
 process.exit(failures.length === 0 ? 0 : 1);
