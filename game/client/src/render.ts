@@ -34,7 +34,7 @@ const TERRAIN_COLOR: Record<number, number> = {
 /** Player colours: red team, blue team, then spares. */
 // Multiplied over the neutral art, so these have to stay light: a saturated
 // mid-tone here crushes every panel line on a vehicle into one flat mass.
-export const PLAYER_COLOR = [0xe08279, 0x84b4e6, 0x86cf9a, 0xe3cd83];
+export const PLAYER_COLOR = [0xd63838, 0x4a8fd6, 0x86cf9a, 0xe3cd83];
 
 export class Renderer {
   readonly app = new Application();

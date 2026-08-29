@@ -7,7 +7,7 @@
  * loop with no clients attached.
  */
 import { acquireTarget, canHarm, damageFor, rangeTo, splashTargets, type Combatant } from "./combat.js";
-import { findPath, smoothPath } from "./pathfind.js";
+import { findPath, nearestReachable, smoothPath } from "./pathfind.js";
 import {
   BUILDINGS,
   buildingDef,
@@ -40,6 +40,12 @@ export const DT = 1 / TICK_RATE;
 
 /** How close counts as arrived, in world units. */
 const ARRIVE_EPSILON = 0.08;
+
+/** Free units spawned when a building's construction completes. */
+const STARTER_UNITS: Record<string, string[]> = {
+  supply_center: ["harvester"],
+  barracks: ["infantry", "rocket"],
+};
 
 export class Sim {
   readonly map: MapData;
@@ -155,8 +161,23 @@ export class Sim {
     const grid = this.gridFor(unitDef(u.type).radius);
     const raw = findPath(grid, this.map.width, this.map.height, u, { x, y });
     if (raw === null) {
-      // Nowhere to go: keep the destination so the unit still nudges toward it
-      // via direct steering, rather than freezing with no explanation.
+      // No direct path: try to find the nearest reachable point to the
+      // destination and path there, so the unit gets as close as it can
+      // instead of grinding against a wall.
+      const near = nearestReachable(grid, this.map.width, this.map.height, u, { x, y });
+      if (near) {
+        const fallback = findPath(grid, this.map.width, this.map.height, u, near);
+        if (fallback) {
+          const smoothed = smoothPath(grid, this.map.width, this.map.height, u, fallback);
+          if (smoothed.length > 0) smoothed[smoothed.length - 1] = { x, y };
+          u.path = smoothed;
+          u.pathGoalX = x;
+          u.pathGoalY = y;
+          return;
+        }
+      }
+      // Truly unreachable: keep the destination so the unit still nudges
+      // toward it via direct steering, rather than freezing.
       u.path = undefined;
     } else {
       const smoothed = smoothPath(grid, this.map.width, this.map.height, u, raw);
@@ -332,6 +353,10 @@ export class Sim {
         // Halt where the unit stands. It still fires on anything in range --
         // stop is not a ceasefire -- but it neither moves nor chases, and a
         // harvester is taken off its job entirely.
+        if (u.buildOrder) {
+          this.economy(playerId).credits += buildingDef(u.buildOrder.buildingType).cost;
+          u.buildOrder = undefined;
+        }
         u.order = undefined;
         u.queue = undefined;
         u.targetX = null;
@@ -347,6 +372,11 @@ export class Sim {
         if ((u.queue?.length ?? 0) < 8) (u.queue ??= []).push(order);
         u.auto = false;
         continue;
+      }
+      // A new order cancels any pending build order the dozer was carrying.
+      if (u.buildOrder) {
+        this.economy(playerId).credits += buildingDef(u.buildOrder.buildingType).cost;
+        u.buildOrder = undefined;
       }
       u.queue = undefined;
       this.applyOrder(u, order);
@@ -564,7 +594,15 @@ export class Sim {
     const deadUnits: number[] = [];
     const deadBuildings: number[] = [];
 
-    for (const [id, u] of this.units) if (u.hp <= 0) deadUnits.push(id);
+    for (const [id, u] of this.units) {
+      if (u.hp <= 0) {
+        deadUnits.push(id);
+        // Refund credits for any build order the dead dozer was carrying.
+        if (u.buildOrder) {
+          this.economy(u.owner).credits += buildingDef(u.buildOrder.buildingType).cost;
+        }
+      }
+    }
     for (const [id, b] of this.buildings) if (b.hp <= 0) deadBuildings.push(id);
     if (deadUnits.length === 0 && deadBuildings.length === 0) return;
 
@@ -640,8 +678,10 @@ export class Sim {
   }
 
   /**
-   * Place a building. Returns null with no side effects if anything is wrong,
-   * so a client cannot half-commit a purchase by sending a bad request.
+   * Place a building directly, deducting credits.
+   *
+   * Used by the AI and starting-base setup, which do not go through the
+   * dozer-travel flow. Player builds use {@link orderBuilding} instead.
    */
   placeBuilding(playerId: number, type: string, x: number, y: number): Building | null {
     if (!(type in BUILDINGS)) return null;
@@ -655,6 +695,68 @@ export class Sim {
     const eco = this.economy(playerId);
     if (eco.credits < def.cost) return null;
     eco.credits -= def.cost;
+
+    return this.doPlaceBuilding(playerId, type, tx, ty);
+  }
+
+  /**
+   * Order a dozer to travel to a site and build there.
+   *
+   * Credits are deducted immediately (reserved). The dozer walks to the
+   * location; when it arrives, the building is placed and construction begins.
+   * If the dozer dies, is redirected, or finds the site occupied on arrival,
+   * the credits are refunded.
+   */
+  orderBuilding(playerId: number, type: string, x: number, y: number): boolean {
+    if (!(type in BUILDINGS)) return false;
+    const def = buildingDef(type);
+    const tx = Math.floor(x);
+    const ty = Math.floor(y);
+
+    if (!this.canBuild(playerId, type)) return false;
+    if (!this.isAreaFree(tx, ty, def.size)) return false;
+
+    const eco = this.economy(playerId);
+    if (eco.credits < def.cost) return false;
+
+    // Find the nearest idle or non-critical dozer.
+    let nearestDozer: Unit | null = null;
+    let nearestDist = Infinity;
+    const cx = tx + def.size / 2;
+    const cy = ty + def.size / 2;
+    for (const u of this.units.values()) {
+      if (u.owner !== playerId || u.type !== "dozer") continue;
+      const d = Math.hypot(u.x - cx, u.y - cy);
+      if (d < nearestDist) {
+        nearestDist = d;
+        nearestDozer = u;
+      }
+    }
+    if (!nearestDozer) return false;
+
+    // Refund any previous build order on this dozer before overwriting it.
+    if (nearestDozer.buildOrder) {
+      const prevDef = buildingDef(nearestDozer.buildOrder.buildingType);
+      this.economy(playerId).credits += prevDef.cost;
+    }
+
+    eco.credits -= def.cost;
+    nearestDozer.buildOrder = { buildingType: type, x: tx, y: ty };
+    this.setDestination(nearestDozer, cx, cy);
+    return true;
+  }
+
+  /**
+   * Create a building entity with no credit check.
+   *
+   * Credits are already handled by the caller — placeBuilding deducts them,
+   * and orderBuilding deducted them when the dozer was sent.
+   */
+  private doPlaceBuilding(playerId: number, type: string, tx: number, ty: number): Building | null {
+    if (!(type in BUILDINGS)) return null;
+    const def = buildingDef(type);
+    if (!this.canBuild(playerId, type)) return null;
+    if (!this.isAreaFree(tx, ty, def.size)) return null;
 
     const ticks = Math.max(1, Math.round(def.buildTime * TICK_RATE));
     const b: Building = {
@@ -671,6 +773,19 @@ export class Sim {
     this.buildings.set(b.id, b);
     this.markBlockedDirty();
     return b;
+  }
+
+  /** Sell a building for a partial refund. Cannot sell the command center. */
+  sellBuilding(playerId: number, buildingId: number): boolean {
+    const b = this.buildings.get(buildingId);
+    if (!b || b.owner !== playerId) return false;
+    if (b.type === "command_center") return false;
+    const def = buildingDef(b.type);
+    const refund = Math.floor(def.cost * 0.5);
+    this.economy(playerId).credits += refund;
+    this.buildings.delete(buildingId);
+    this.markBlockedDirty();
+    return true;
   }
 
   /** Queue a unit at one of our operational buildings. */
@@ -753,6 +868,17 @@ export class Sim {
 
       if (b.buildRemaining > 0) {
         b.buildRemaining = Math.max(0, b.buildRemaining - speed);
+        if (b.buildRemaining === 0) {
+          // Construction just finished: spawn starter units so the building
+          // is useful immediately rather than needing a production queue.
+          const starters = STARTER_UNITS[b.type];
+          if (starters) {
+            for (const unitType of starters) {
+              const at = this.spawnPointFor(b, unitDef(unitType).radius);
+              this.spawnUnit(b.owner, unitType, at.x, at.y);
+            }
+          }
+        }
         continue; // A building under construction produces nothing.
       }
 
@@ -795,8 +921,12 @@ export class Sim {
     return best;
   }
 
-  /** Nearest completed supply centre belonging to this player. */
-  private nearestDropOff(owner: number, x: number, y: number): Building | null {
+  /** Assigned or nearest completed supply centre belonging to this player. */
+  private nearestDropOff(owner: number, x: number, y: number, assignedId?: number): Building | null {
+    if (assignedId !== undefined) {
+      const b = this.buildings.get(assignedId);
+      if (b && b.owner === owner && b.type === "supply_center" && b.buildRemaining === 0) return b;
+    }
     let best: Building | null = null;
     let bestD = Infinity;
     for (const b of this.buildings.values()) {
@@ -847,8 +977,11 @@ export class Sim {
       }
 
       case "returning": {
-        const drop = this.nearestDropOff(u.owner, u.x, u.y);
+        const drop = this.nearestDropOff(u.owner, u.x, u.y, u.dropOffId);
         if (!drop) return; // No supply centre yet: wait rather than dump cargo.
+        // Remember which supply centre we use so the harvester keeps returning
+        // to the same one instead of chasing the nearest every trip.
+        u.dropOffId = drop.id;
         const size = buildingDef(drop.type).size;
         const dx = drop.x + size / 2;
         const dy = drop.y + size / 2;
@@ -875,13 +1008,19 @@ export class Sim {
     }
   }
 
-  /** The node a harvester should work: its current one, else the nearest. */
+  /** The node a harvester should work: its assigned one, or nearest if unassigned. */
   private nodeFor(u: Unit): SupplyNode | null {
     if (u.nodeId !== undefined) {
       const n = this.supplyNodes.get(u.nodeId);
       if (n && n.amount > 0) return n;
+      // Assigned pile is depleted — clear assignment so we can find a new one.
+      u.nodeId = undefined;
     }
-    return this.nearestNode(u.x, u.y);
+    // Only find a new pile if the harvester has no assignment.
+    // This keeps harvesters loyal to their pile instead of wandering.
+    const nearest = this.nearestNode(u.x, u.y);
+    if (nearest) u.nodeId = nearest.id;
+    return nearest;
   }
 
   /**
@@ -917,9 +1056,27 @@ export class Sim {
       u.targetX = null;
       u.targetY = null;
       this.clearPath(u);
+      // A dozer that was sent to build places the building on arrival.
+      if (u.buildOrder) {
+        const { buildingType, x: bx, y: by } = u.buildOrder;
+        u.buildOrder = undefined;
+        const placed = this.doPlaceBuilding(u.owner, buildingType, bx, by);
+        if (!placed) {
+          // Site became occupied while the dozer was en route: refund.
+          this.economy(u.owner).credits += buildingDef(buildingType).cost;
+        }
+      }
       // A completed leg chains into the next queued order, if one exists.
       if (u.order?.kind === "move" || u.order?.kind === "attackMove") {
-        if (!this.advanceQueue(u) && u.order.kind === "move") u.order = undefined;
+        if (!this.advanceQueue(u) && u.order.kind === "move") {
+          u.order = undefined;
+          // A harvester that finishes a manual move resumes harvesting
+          // automatically, so the player cannot strand it by misclicking.
+          if (u.type === "harvester") {
+            u.auto = true;
+            u.harvest = "seeking";
+          }
+        }
       }
       return;
     }
@@ -967,7 +1124,7 @@ export class Sim {
     const moved = Math.hypot(u.x - beforeX, u.y - beforeY);
     if (moved < travel * 0.25) {
       u.stuckFor = (u.stuckFor ?? 0) + 1;
-      if (u.stuckFor > TICK_RATE) {
+      if (u.stuckFor > Math.floor(TICK_RATE / 2)) {
         const gx = u.targetX;
         const gy = u.targetY;
         this.clearPath(u);

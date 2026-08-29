@@ -197,6 +197,8 @@ export interface Unit {
   harvest?: HarvestState;
   /** Supply node being worked, harvesters only. */
   nodeId?: number;
+  /** Assigned supply centre for drop-off, harvesters only. */
+  dropOffId?: number;
   /** Current intent. Absent means idle. */
   order?: Order;
   /**
@@ -220,6 +222,13 @@ export interface Unit {
    * actually keeps it there instead of it immediately wandering back to work.
    */
   auto?: boolean;
+  /**
+   * A build order this dozer is travelling to fulfil.
+   *
+   * Credits are deducted when the order is issued and refunded if the dozer
+   * dies, is given a different order, or arrives to find the site occupied.
+   */
+  buildOrder?: { buildingType: string; x: number; y: number };
 }
 
 /** A supply deposit on the map. */

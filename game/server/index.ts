@@ -233,13 +233,15 @@ wss.on("connection", (ws) => {
     if (msg.t === "move" && Array.isArray(msg.unitIds)) {
       sim.issueMove(playerId, msg.unitIds, msg.x, msg.y);
     } else if (msg.t === "build" && typeof msg.buildingType === "string") {
-      sim.placeBuilding(playerId, msg.buildingType, msg.x, msg.y);
+      sim.orderBuilding(playerId, msg.buildingType, msg.x, msg.y);
     } else if (msg.t === "train" && typeof msg.buildingId === "number") {
       sim.queueUnit(playerId, msg.buildingId, msg.unitType);
     } else if (msg.t === "order" && Array.isArray(msg.unitIds)) {
       sim.issueOrder(playerId, msg.unitIds, msg.order, msg.append === true);
     } else if (msg.t === "rally" && typeof msg.buildingId === "number") {
       sim.setRally(playerId, msg.buildingId, msg.x, msg.y);
+    } else if (msg.t === "sell" && typeof msg.buildingId === "number") {
+      sim.sellBuilding(playerId, msg.buildingId);
     } else if (msg.t === "newMatch") {
       // Any player may restart. This is a game for you and people you invited,
       // not a public service, so host privileges would be ceremony.

@@ -80,6 +80,12 @@ export interface RallyCmd {
   y: number;
 }
 
+/** Client -> server: sell a building for a partial refund. */
+export interface SellCmd {
+  t: "sell";
+  buildingId: number;
+}
+
 /** Client -> server: throw away this match and start a new one. */
 export interface NewMatchCmd {
   t: "newMatch";
@@ -90,4 +96,4 @@ export interface NewMatchCmd {
 }
 
 export type ServerMsg = WelcomeMsg | SnapshotMsg;
-export type ClientMsg = MoveCmd | BuildCmd | TrainCmd | OrderCmd | RallyCmd | NewMatchCmd;
+export type ClientMsg = MoveCmd | BuildCmd | TrainCmd | OrderCmd | RallyCmd | SellCmd | NewMatchCmd;

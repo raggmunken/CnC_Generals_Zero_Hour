@@ -13,7 +13,7 @@ import { AudioEngine } from "./audio.js";
 import type { DamageType } from "../../shared/types.js";
 
 const CAMERA_SPEED = 18; // world units per second
-const EDGE_SCROLL_PX = 24;
+const EDGE_SCROLL_PX = 48;
 /** How far past the map edge the camera may scroll, in world units. */
 const EDGE_MARGIN = 2;
 
@@ -543,6 +543,29 @@ addEventListener("keydown", (e) => {
     flashHint(muted ? "sound off" : "sound on");
     return;
   }
+  if (e.code === "KeyB" && !e.repeat) {
+    // Jump to the nearest dozer and select it, so the player can quickly
+    // find their builder without hunting across the map.
+    let nearest: Unit | null = null;
+    let bestD = Infinity;
+    const cx = renderer.camX + window.innerWidth / renderer.tilePx / 2;
+    const cy = renderer.camY + window.innerHeight / renderer.tilePx / 2;
+    for (const u of currUnits.values()) {
+      if (u.owner !== playerId || u.type !== "dozer") continue;
+      const d = Math.hypot(u.x - cx, u.y - cy);
+      if (d < bestD) { bestD = d; nearest = u; }
+    }
+    if (nearest) {
+      selected.clear();
+      selected.add(nearest.id);
+      selectedBuilding = null;
+      renderer.camX = nearest.x - window.innerWidth / renderer.tilePx / 2;
+      renderer.camY = nearest.y - window.innerHeight / renderer.tilePx / 2;
+      clampCamera();
+      renderPanel();
+    }
+    return;
+  }
   if (e.code === "KeyA" && !e.repeat && selected.size > 0) attackMoveArmed = true;
   if (e.code === "Escape" && !lobby.hidden) {
     lobby.hidden = true;
@@ -790,6 +813,15 @@ function renderPanel(): void {
         (sel.queue.length > 1 ? `  (+${sel.queue.length - 1})` : "");
       panelItems.append(q);
     }
+
+    panelItems.append(makeItem(
+      "Sell", Math.floor(buildingDef(sel.type).cost * 0.5),
+      "Refund 50% and demolish", sel.type === "command_center", false, () => {
+        net.send({ t: "sell", buildingId: sel.id });
+        selectedBuilding = null;
+        renderPanel();
+      },
+    ));
 
     panelItems.append(makeBack());
     return;
