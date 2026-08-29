@@ -9,6 +9,8 @@ import type { ServerMsg } from "../../shared/protocol.js";
 import type { Building, Economy, SupplyNode, Tracer, Unit } from "../../shared/types.js";
 import { Net } from "./net.js";
 import { Renderer } from "./render.js";
+import { AudioEngine } from "./audio.js";
+import type { DamageType } from "../../shared/types.js";
 
 const CAMERA_SPEED = 18; // world units per second
 const EDGE_SCROLL_PX = 24;
@@ -28,12 +30,39 @@ const endscreen = document.getElementById("endscreen")!;
 const endTitle = document.getElementById("end-title")!;
 const endDetail = document.getElementById("end-detail")!;
 const panelTitle = document.getElementById("panel-title")!;
+const hintEl = document.getElementById("hint")!;
+const HINT_TEXT = hintEl.textContent ?? "";
+let hintTimer = 0;
+/** Briefly replace the hint bar with feedback, then restore it. */
+function flashHint(text: string): void {
+  hintEl.textContent = text;
+  window.clearTimeout(hintTimer);
+  hintTimer = window.setTimeout(() => (hintEl.textContent = HINT_TEXT), 1200);
+}
 const renderer = new Renderer();
 await renderer.init();
 // Optional: the game plays with primitive shapes if the sheet is absent.
 await renderer.loadAtlas();
 
 const net = new Net();
+const audio = new AudioEngine();
+// Browsers block audio until a user gesture; the first input unlocks it.
+addEventListener("pointerdown", () => audio.unlock(), { capture: true });
+addEventListener("keydown", () => audio.unlock(), { capture: true });
+
+/** Weapon damage type -> firing sound. Flak is a lighter, faster rifle. */
+const WEAPON_SFX: Record<DamageType, { name: "rifle" | "cannon" | "rocket"; rate: number }> = {
+  gun: { name: "rifle", rate: 1 },
+  flak: { name: "rifle", rate: 1.35 },
+  cannon: { name: "cannon", rate: 1 },
+  rocket: { name: "rocket", rate: 1 },
+  explosive: { name: "cannon", rate: 0.8 },
+};
+
+/** Centre of the viewport in world units, for positional volume. */
+function viewCentre(): { x: number; y: number } {
+  return renderer.screenToWorld(window.innerWidth / 2, window.innerHeight / 2);
+}
 
 let playerId = -1;
 let status = "connecting";
@@ -143,15 +172,25 @@ net.onMessage = (msg: ServerMsg) => {
       if (currUnits.has(id)) continue;
       if (u.owner === playerId || tileVisible(u.x, u.y)) {
         renderer.spawnEffect("explosion", u.x, u.y, Math.max(0.6, unitDef(u.type).radius));
+        const vc = viewCentre();
+        audio.playAt("explosion", u.x, u.y, vc.x, vc.y);
       }
     }
     for (const b of buildings) {
-      if (msg.buildings.some((nb) => nb.id === b.id)) continue;
-      const size = buildingDef(b.type).size;
-      const cx = b.x + size / 2;
-      const cy = b.y + size / 2;
-      if (b.owner === playerId || tileVisible(cx, cy)) {
-        renderer.spawnEffect("bigExplosion", cx, cy, size / 2);
+      const nb = msg.buildings.find((c) => c.id === b.id);
+      if (!nb) {
+        const size = buildingDef(b.type).size;
+        const cx = b.x + size / 2;
+        const cy = b.y + size / 2;
+        if (b.owner === playerId || tileVisible(cx, cy)) {
+          renderer.spawnEffect("bigExplosion", cx, cy, size / 2);
+          const vc = viewCentre();
+          audio.playAt("bigexplosion", cx, cy, vc.x, vc.y);
+        }
+      } else if (b.buildRemaining > 0 && nb.buildRemaining === 0 && nb.owner === playerId) {
+        // "Construction complete" is a notification, not a positional sound --
+        // you want to hear it wherever the camera is.
+        audio.play("build", 0.8);
       }
     }
 
@@ -174,9 +213,21 @@ net.onMessage = (msg: ServerMsg) => {
       economy: msg.economy,
       tick: msg.tick,
     };
-    for (const t of msg.tracers) liveTracers.push({ ...t, at: now });
+    for (const t of msg.tracers) {
+      liveTracers.push({ ...t, at: now });
+      const sfx = WEAPON_SFX[t.weapon];
+      if (sfx) {
+        const vc = viewCentre();
+        audio.playAt(sfx.name, t.x0, t.y0, vc.x, vc.y, 0.7, sfx.rate);
+      }
+    }
     for (const n of supply) {
       supplyMax.set(n.id, Math.max(supplyMax.get(n.id) ?? 0, n.amount));
+    }
+    // The only income source is a harvester unload, so a credits increase is
+    // exactly one delivery.
+    if (msg.economy.credits > economy.credits && economy.credits > 0) {
+      audio.play("harvest", 0.35, 1.1);
     }
     economy = msg.economy;
     if (!centred) centreOnOwnUnits();
@@ -468,6 +519,16 @@ addEventListener("keydown", (e) => {
     renderPanel();
     return;
   }
+  if (e.code === "KeyS" && !e.repeat && selected.size > 0) {
+    // Stop: halt, hold fire only in the sense of not chasing. Clears queues.
+    net.send({ t: "order", unitIds: [...selected], order: { kind: "stop" } });
+    return;
+  }
+  if (e.code === "KeyM" && !e.repeat) {
+    const muted = audio.toggleMute();
+    flashHint(muted ? "sound off" : "sound on");
+    return;
+  }
   if (e.code === "KeyA" && !e.repeat && selected.size > 0) attackMoveArmed = true;
   if (e.code === "Escape" && !lobby.hidden) {
     lobby.hidden = true;
@@ -542,6 +603,7 @@ canvas.addEventListener("pointerdown", (e) => {
     }
 
     // Right-click an enemy attacks it; right-click ground moves or attack-moves.
+    // Shift queues the order behind what the units are already doing.
     const enemyUnit = unitAtScreen(e.clientX, e.clientY);
     const enemyBuilding = buildingAtScreen(e.clientX, e.clientY);
     const wClick = renderer.screenToWorld(e.clientX, e.clientY);
@@ -549,16 +611,18 @@ canvas.addEventListener("pointerdown", (e) => {
       net.send({
         t: "order", unitIds: [...selected],
         order: { kind: "attack", targetId: enemyUnit.id, targetKind: "unit" },
+        append: e.shiftKey,
       });
       renderer.spawnEffect("attack", wClick.x, wClick.y);
     } else if (enemyBuilding && enemyBuilding.owner !== playerId && selected.size > 0) {
       net.send({
         t: "order", unitIds: [...selected],
         order: { kind: "attack", targetId: enemyBuilding.id, targetKind: "building" },
+        append: e.shiftKey,
       });
       renderer.spawnEffect("attack", wClick.x, wClick.y);
     } else {
-      issueMoveAt(e.clientX, e.clientY);
+      issueMoveAt(e.clientX, e.clientY, e.shiftKey);
     }
     attackMoveArmed = false;
   }
@@ -601,7 +665,7 @@ canvas.addEventListener("pointerup", (e) => {
       selected.clear();
       renderPanel();
     } else if (selected.size > 0) {
-      issueMoveAt(e.clientX, e.clientY);
+      issueMoveAt(e.clientX, e.clientY, e.shiftKey);
     } else {
       selected.clear();
     }
@@ -786,7 +850,10 @@ function makeItem(
   w.className = "why";
   w.textContent = why;
   el.append(w);
-  el.addEventListener("click", onClick);
+  el.addEventListener("click", () => {
+    audio.play("click", 0.6);
+    onClick();
+  });
   return el;
 }
 
@@ -834,13 +901,17 @@ function selectSameType(type: string, everywhere: boolean): void {
   selectedBuilding = null;
 }
 
-function issueMoveAt(sx: number, sy: number): void {
+function issueMoveAt(sx: number, sy: number, append = false): void {
   if (selected.size === 0) return;
   const w = renderer.screenToWorld(sx, sy);
   if (attackMoveArmed) {
-    net.send({ t: "order", unitIds: [...selected], order: { kind: "attackMove", x: w.x, y: w.y } });
+    net.send({ t: "order", unitIds: [...selected], order: { kind: "attackMove", x: w.x, y: w.y }, append });
     attackMoveArmed = false;
     renderer.spawnEffect("attack", w.x, w.y);
+  } else if (append) {
+    // MoveCmd has no queue flag, so a shift-move goes as a full order.
+    net.send({ t: "order", unitIds: [...selected], order: { kind: "move", x: w.x, y: w.y }, append: true });
+    renderer.spawnEffect("ping", w.x, w.y);
   } else {
     net.send({ t: "move", unitIds: [...selected], x: w.x, y: w.y });
     renderer.spawnEffect("ping", w.x, w.y);
@@ -931,10 +1002,12 @@ renderer.app.ticker.add(() => {
   // second and read back as undefined.
   (window as unknown as { __rtsView?: unknown }).__rtsView = {
     selected: selected.size,
+    selectedIds: [...selected],
     rangeRings: rings.length,
     selectedBuilding,
     effects: renderer.effectCount,
     endState,
+    audioLoaded: audio.loadedCount,
   };
 
   // Age out tracers, then draw what is left with a linear fade.
