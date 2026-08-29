@@ -99,7 +99,7 @@ export const BUILDINGS: Record<string, BuildingTypeDef> = {
     size: 3,
     power: -5,
     requires: ["barracks"],
-    produces: ["tank", "aa_vehicle", "artillery"],
+    produces: ["tank", "aa_vehicle", "artillery", "chopper"],
     description: "Builds vehicles. Needs a barracks first.",
     armour: "structure",
     vision: 7,
@@ -206,6 +206,16 @@ export const UNITS: Record<string, UnitTypeDef> = {
       damage: 70, damageType: "explosive", range: 13, reload: 4.0,
       splash: { radius: 2.4, minFraction: 0.35 },
     },
+  },
+  chopper: {
+    id: "chopper", name: "Attack Chopper", cost: 1200, buildTime: 18,
+    speed: 5.5, maxHp: 350, radius: 0.55, producedBy: "war_factory",
+    role: "Fast gunship. Flies over anything, strafes ground and air. Only flak answers it.",
+    armour: "air", vision: 9,
+    // Rockets keep it honest against armour and other aircraft; the matrix
+    // makes cannons and artillery pointless against it, which is the point of
+    // air: it forces the opponent to build flak.
+    weapon: { damage: 34, damageType: "rocket", range: 7, reload: 1.6 },
   },
 };
 
