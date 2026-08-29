@@ -24,6 +24,9 @@ const lobbyBots = document.getElementById("lobby-bots") as HTMLSelectElement;
 const lobbyDifficulty = document.getElementById("lobby-difficulty") as HTMLSelectElement;
 const lobbySeed = document.getElementById("lobby-seed") as HTMLInputElement;
 const minimapCtx = minimap.getContext("2d")!;
+const endscreen = document.getElementById("endscreen")!;
+const endTitle = document.getElementById("end-title")!;
+const endDetail = document.getElementById("end-detail")!;
 const panelTitle = document.getElementById("panel-title")!;
 const renderer = new Renderer();
 await renderer.init();
@@ -54,6 +57,10 @@ let placing: string | null = null;
 /** True while the next click issues an attack-move rather than a move. */
 let attackMoveArmed = false;
 let eliminated: number[] = [];
+/** Every player in the match, from the welcome message; drives the end screen. */
+let matchPlayers: Array<{ id: number; team: number }> = [];
+/** Match outcome already announced, so the overlay shows once per match. */
+let endState: "victory" | "defeat" | null = null;
 
 /**
  * Fog state.
@@ -82,6 +89,8 @@ const selected = new Set<number>();
 const keys = new Set<string>();
 /** Ctrl+1..9 stores a selection, 1..9 recalls it. */
 const controlGroups = new Map<string, number[]>();
+/** Last group recall, so a double-tap can centre the camera on the group. */
+let lastGroupRecall: { slot: string; at: number } = { slot: "", at: 0 };
 /** Terrain drawn once into an offscreen canvas; only fog and units redraw. */
 let minimapTerrain: HTMLCanvasElement | null = null;
 let pointer = { x: 0, y: 0, inside: false };
@@ -104,6 +113,9 @@ net.onMessage = (msg: ServerMsg) => {
     placing = null;
     buildings = [];
     supply = [];
+    matchPlayers = msg.players.map((p) => ({ id: p.id, team: p.team }));
+    endState = null;
+    endscreen.hidden = true;
     currUnits = new Map();
     prevUnits = new Map();
     centred = false;
@@ -115,14 +127,42 @@ net.onMessage = (msg: ServerMsg) => {
     // Camera is centred once our units actually arrive -- see below. Welcome
     // lands before the first snapshot, so there is nothing to centre on yet.
   } else if (msg.t === "snap") {
+    const now = performance.now();
+    updateFog(msg.vision);
+
+    // Deaths are derived, not sent: something on a tile we can see that stops
+    // existing blew up. Fog hides enemy movement, so a unit that walks out of
+    // sight vanishes identically to one that died -- only exploding the ones
+    // we can actually see keeps "left view" and "destroyed" distinct.
+    const tileVisible = (x: number, y: number): boolean => {
+      const tx = Math.floor(x);
+      const ty = Math.floor(y);
+      return tx >= 0 && ty >= 0 && tx < mapW && ty < mapH && visible[ty * mapW + tx] === 1;
+    };
+    for (const [id, u] of prevUnits) {
+      if (currUnits.has(id)) continue;
+      if (u.owner === playerId || tileVisible(u.x, u.y)) {
+        renderer.spawnEffect("explosion", u.x, u.y, Math.max(0.6, unitDef(u.type).radius));
+      }
+    }
+    for (const b of buildings) {
+      if (msg.buildings.some((nb) => nb.id === b.id)) continue;
+      const size = buildingDef(b.type).size;
+      const cx = b.x + size / 2;
+      const cy = b.y + size / 2;
+      if (b.owner === playerId || tileVisible(cx, cy)) {
+        renderer.spawnEffect("bigExplosion", cx, cy, size / 2);
+      }
+    }
+
     prevUnits = currUnits;
     prevAt = currAt;
     currUnits = new Map(msg.units.map((u) => [u.id, u]));
-    currAt = performance.now();
+    currAt = now;
     buildings = msg.buildings;
     supply = msg.supply;
     eliminated = msg.eliminated;
-    updateFog(msg.vision);
+    updateEndscreen();
 
     // Expose this client's view for tests and debugging. Safe to publish: the
     // server has already filtered it to what this player may know, so there is
@@ -134,7 +174,6 @@ net.onMessage = (msg: ServerMsg) => {
       economy: msg.economy,
       tick: msg.tick,
     };
-    const now = performance.now();
     for (const t of msg.tracers) liveTracers.push({ ...t, at: now });
     for (const n of supply) {
       supplyMax.set(n.id, Math.max(supplyMax.get(n.id) ?? 0, n.amount));
@@ -306,6 +345,41 @@ lobbyPlayers.addEventListener("change", () => {
 });
 
 document.getElementById("lobby-open")!.addEventListener("click", () => { lobby.hidden = false; });
+document.getElementById("end-again")!.addEventListener("click", () => {
+  endscreen.hidden = true;
+  lobby.hidden = false;
+});
+document.getElementById("end-watch")!.addEventListener("click", () => {
+  endscreen.hidden = true;
+});
+
+/**
+ * Announce the match result.
+ *
+ * The server only reports who is eliminated; whether that means victory or
+ * defeat depends on teams, which only the welcome message knows. Defeat is
+ * announced the moment we are out; victory when nobody on another team is
+ * left. A match with nobody else in it (yet) is not won by default.
+ */
+function updateEndscreen(): void {
+  if (endState !== null) return;
+  const me = matchPlayers.find((p) => p.id === playerId);
+  if (!me) return;
+  if (eliminated.includes(playerId)) {
+    endState = "defeat";
+  } else {
+    const foesLeft = matchPlayers.filter((p) => p.team !== me.team && !eliminated.includes(p.id));
+    if (matchPlayers.length < 2 || foesLeft.length > 0) return;
+    endState = "victory";
+  }
+  endTitle.textContent = endState === "victory" ? "VICTORY" : "DEFEAT";
+  endTitle.style.color = endState === "victory" ? "#9fe870" : "#e05a4a";
+  endDetail.textContent = endState === "victory"
+    ? "Every opposing force has been destroyed."
+    : "Your forces have been destroyed. The battle goes on without you.";
+  endscreen.hidden = false;
+}
+
 document.getElementById("lobby-cancel")!.addEventListener("click", () => { lobby.hidden = true; });
 document.getElementById("lobby-start")!.addEventListener("click", () => {
   net.send({
@@ -350,6 +424,23 @@ addEventListener("keydown", (e) => {
         for (const id of group) if (currUnits.has(id)) selected.add(id);
         selectedBuilding = null;
         renderPanel();
+
+        // Double-tap jumps the camera to the group -- the other half of the
+        // control-group idiom, and the fast way back to a fight.
+        const nowMs = performance.now();
+        if (lastGroupRecall.slot === slot && nowMs - lastGroupRecall.at < 450 && selected.size > 0) {
+          let cx = 0;
+          let cy = 0;
+          for (const id of selected) {
+            const u = currUnits.get(id)!;
+            cx += u.x;
+            cy += u.y;
+          }
+          renderer.camX = cx / selected.size - window.innerWidth / renderer.tilePx / 2;
+          renderer.camY = cy / selected.size - window.innerHeight / renderer.tilePx / 2;
+          clampCamera();
+        }
+        lastGroupRecall = { slot, at: nowMs };
       }
     }
     return;
@@ -402,6 +493,19 @@ canvas.addEventListener("contextmenu", (e) => e.preventDefault());
 canvas.addEventListener("pointermove", (e) => {
   pointer = { x: e.clientX, y: e.clientY, inside: true };
   if (dragStart) dragNow = { x: e.clientX, y: e.clientY };
+
+  // Context cursor: with an armed selection, hovering an enemy means attack.
+  // Reading hit targets per mousemove is a handful of distance checks against
+  // the visible unit list, far cheaper than a misread order.
+  let cursor = "default";
+  if (placing) {
+    cursor = "copy";
+  } else if (selected.size > 0) {
+    const u = unitAtScreen(e.clientX, e.clientY);
+    const b = u ? null : buildingAtScreen(e.clientX, e.clientY);
+    if ((u && u.owner !== playerId) || (b && b.owner !== playerId)) cursor = "crosshair";
+  }
+  canvas.style.cursor = cursor;
 });
 canvas.addEventListener("pointerleave", () => { pointer.inside = false; });
 
@@ -440,16 +544,19 @@ canvas.addEventListener("pointerdown", (e) => {
     // Right-click an enemy attacks it; right-click ground moves or attack-moves.
     const enemyUnit = unitAtScreen(e.clientX, e.clientY);
     const enemyBuilding = buildingAtScreen(e.clientX, e.clientY);
+    const wClick = renderer.screenToWorld(e.clientX, e.clientY);
     if (enemyUnit && enemyUnit.owner !== playerId && selected.size > 0) {
       net.send({
         t: "order", unitIds: [...selected],
         order: { kind: "attack", targetId: enemyUnit.id, targetKind: "unit" },
       });
+      renderer.spawnEffect("attack", wClick.x, wClick.y);
     } else if (enemyBuilding && enemyBuilding.owner !== playerId && selected.size > 0) {
       net.send({
         t: "order", unitIds: [...selected],
         order: { kind: "attack", targetId: enemyBuilding.id, targetKind: "building" },
       });
+      renderer.spawnEffect("attack", wClick.x, wClick.y);
     } else {
       issueMoveAt(e.clientX, e.clientY);
     }
@@ -733,8 +840,10 @@ function issueMoveAt(sx: number, sy: number): void {
   if (attackMoveArmed) {
     net.send({ t: "order", unitIds: [...selected], order: { kind: "attackMove", x: w.x, y: w.y } });
     attackMoveArmed = false;
+    renderer.spawnEffect("attack", w.x, w.y);
   } else {
     net.send({ t: "move", unitIds: [...selected], x: w.x, y: w.y });
+    renderer.spawnEffect("ping", w.x, w.y);
   }
 }
 
@@ -824,6 +933,8 @@ renderer.app.ticker.add(() => {
     selected: selected.size,
     rangeRings: rings.length,
     selectedBuilding,
+    effects: renderer.effectCount,
+    endState,
   };
 
   // Age out tracers, then draw what is left with a linear fade.
@@ -852,13 +963,30 @@ renderer.app.ticker.add(() => {
       : null,
   );
 
+  // Selection breakdown, so a mixed army reads as more than a bare count.
+  let selSummary = "";
+  if (selected.size > 0) {
+    const counts = new Map<string, number>();
+    for (const id of selected) {
+      const u = currUnits.get(id);
+      if (!u) continue;
+      const name = unitDef(u.type).name;
+      counts.set(name, (counts.get(name) ?? 0) + 1);
+    }
+    selSummary = [...counts.entries()]
+      .sort((a, b) => b[1] - a[1])
+      .map(([name, n]) => (n > 1 ? `${name} x${n}` : name))
+      .join(", ");
+  }
+
   const lowPower = economy.powerConsumed > economy.powerProduced;
   hud.textContent =
     `${status}  ·  player ${playerId < 0 ? "?" : playerId + 1}  ·  ` +
     `$${economy.credits}  ·  power ${economy.powerProduced - economy.powerConsumed}` +
     `${lowPower ? " LOW" : ""}  ·  units ${currUnits.size}  ·  selected ${selected.size}` +
     `${attackMoveArmed ? "  ·  ATTACK-MOVE" : ""}` +
-    `${eliminated.includes(playerId) ? "  ·  DEFEATED" : ""}`;
+    `${endState === "defeat" ? "  ·  DEFEATED" : ""}` +
+    (selSummary ? `\n${selSummary}` : "");
 });
 
 function updateCamera(dt: number): void {
