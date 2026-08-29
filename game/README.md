@@ -65,7 +65,7 @@ The numbers are ours.
 | Power Plant | 800 | +10 | Command Center | — |
 | Supply Center | 1500 | -2 | Command Center | Harvester |
 | Barracks | 700 | -2 | Command Center | Infantry, Rocket Infantry |
-| War Factory | 2000 | -5 | Barracks | Battle Tank, AA Vehicle |
+| War Factory | 2000 | -5 | Barracks | Battle Tank, AA Vehicle, Artillery, Attack Chopper |
 | Defense Turret | 900 | -3 | Barracks | — |
 
 Unavailable entries stay visible but disabled with the reason ("needs
@@ -126,6 +126,13 @@ Buildings are hard obstacles; units separate rather than block, because hard
 unit-versus-unit blocking without a pathfinder deadlocks a group at the first
 narrow gap.
 
+Aircraft are in: the Attack Chopper flies straight over terrain and bases (no
+pathfinding -- the sky has no walls), is drawn hovering above its ground
+shadow, and can only be answered by flak. Cannons and artillery score a genuine
+zero against air, so air forces the opponent to build AA, and the AI both mixes
+choppers into its own vehicle fleet and queues AA vehicles and AA batteries the
+moment it *sees* enemy air.
+
 ## Economy
 
 Supply piles sit two per base and three in a contested centre, which is what
@@ -173,8 +180,11 @@ from the camera, off-screen events go quiet), rate-limited so a tank battle is
 a battle and not white noise, and mutable with M. S stops the selection, and
 shift queues orders behind what a unit is already doing.
 
+The interface is a modern glass UI: status chips up top, a build panel of
+cards with the same sprites the map draws, a framed minimap, and key chips for
+the shortcuts.
+
 `npm test` runs all three suites -- headless simulation tests, the gameplay
 audit, then the browser end-to-end check.
 
-Next: aircraft (the armour class, flak weapons and AA battery exist, but no
-unit flies), save/load and replays, veterancy.
+Next: save/load and replays, veterancy.
