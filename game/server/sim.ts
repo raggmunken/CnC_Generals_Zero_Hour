@@ -136,6 +136,15 @@ export class Sim {
     u.targetX = x;
     u.targetY = y;
 
+    // Aircraft fly straight: terrain is a ground unit's problem. No path means
+    // moveUnit's direct steering takes them over mountains, water and bases.
+    if (unitDef(u.type).armour === "air") {
+      u.path = undefined;
+      u.pathGoalX = x;
+      u.pathGoalY = y;
+      return;
+    }
+
     const sameGoal =
       u.pathGoalX !== undefined &&
       Math.hypot(u.pathGoalX - x, (u.pathGoalY ?? 0) - y) < 1.0;
@@ -265,6 +274,11 @@ export class Sim {
         const rb = unitDef(b.type).radius;
         const min = ra + rb;
 
+        // Air and ground share a tile but not an altitude: they never collide.
+        const aAir = unitDef(a.type).armour === "air";
+        const bAir = unitDef(b.type).armour === "air";
+        if (aAir !== bAir) continue;
+
         let dx = b.x - a.x;
         let dy = b.y - a.y;
         let d = Math.hypot(dx, dy);
@@ -283,11 +297,11 @@ export class Sim {
         const nx = (dx / d) * push;
         const ny = (dy / d) * push;
 
-        if (!this.isBlockedFor(a.x - nx, a.y - ny, ra)) {
+        if (aAir || !this.isBlockedFor(a.x - nx, a.y - ny, ra)) {
           a.x -= nx;
           a.y -= ny;
         }
-        if (!this.isBlockedFor(b.x + nx, b.y + ny, rb)) {
+        if (bAir || !this.isBlockedFor(b.x + nx, b.y + ny, rb)) {
           b.x += nx;
           b.y += ny;
         }
@@ -916,6 +930,14 @@ export class Sim {
     const nx = u.x + (dx / dist) * travel;
     const ny = u.y + (dy / dist) * travel;
     const r = def.radius;
+
+    // Aircraft ignore every obstacle between them and the destination. The
+    // only wall they respect is the edge of the world.
+    if (def.armour === "air") {
+      u.x = Math.min(Math.max(nx, 0), this.map.width - 0.01);
+      u.y = Math.min(Math.max(ny, 0), this.map.height - 0.01);
+      return;
+    }
 
     const beforeX = u.x;
     const beforeY = u.y;
