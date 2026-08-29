@@ -471,7 +471,8 @@ function centreOnOwnUnits(): void {
 // -- input ------------------------------------------------------------------
 
 addEventListener("keydown", (e) => {
-  keys.add(e.code);
+  // Ignore shortcuts when typing in an input field (lobby seed, etc).
+  if (e.target instanceof HTMLInputElement || e.target instanceof HTMLSelectElement) return;
 
   // Control groups. Ctrl+N assigns the current selection, N recalls it --
   // the muscle memory every RTS player already has.
@@ -566,7 +567,10 @@ addEventListener("keydown", (e) => {
     }
     return;
   }
-  if (e.code === "KeyA" && !e.repeat && selected.size > 0) attackMoveArmed = true;
+  if (e.code === "KeyA" && !e.repeat && selected.size > 0) {
+    attackMoveArmed = true;
+    return; // Don't scroll the camera when A is used to arm attack-move.
+  }
   if (e.code === "Escape" && !lobby.hidden) {
     lobby.hidden = true;
     return;
@@ -580,7 +584,11 @@ addEventListener("keydown", (e) => {
     else if (selectedBuilding !== null) selectedBuilding = null;
     else selected.clear();
     renderPanel();
+    return;
   }
+
+  // Camera keys that fell through without triggering a game action.
+  keys.add(e.code);
 });
 addEventListener("keyup", (e) => keys.delete(e.code));
 addEventListener("blur", () => keys.clear());
@@ -814,14 +822,20 @@ function renderPanel(): void {
       panelItems.append(q);
     }
 
-    panelItems.append(makeItem(
-      "Sell", Math.floor(buildingDef(sel.type).cost * 0.5),
-      "Refund 50% and demolish", sel.type === "command_center", false, () => {
-        net.send({ t: "sell", buildingId: sel.id });
-        selectedBuilding = null;
-        renderPanel();
-      },
-    ));
+    if (sel.sellRemaining !== undefined && sel.sellTotal !== undefined) {
+      const pct = Math.round((1 - sel.sellRemaining / sel.sellTotal) * 100);
+      const q = document.createElement("div");
+      q.className = "item plain";
+      q.textContent = `Selling ${pct}%`;
+      panelItems.append(q);
+    } else {
+      panelItems.append(makeItem(
+        "Sell", Math.floor(buildingDef(sel.type).cost * 0.5),
+        "Refund 50%, takes half build time", sel.type === "command_center" || sel.buildRemaining > 0, false, () => {
+          net.send({ t: "sell", buildingId: sel.id });
+        },
+      ));
+    }
 
     panelItems.append(makeBack());
     return;
@@ -872,7 +886,12 @@ function panelSignature(): string {
     ? `${head.unitType}:${Math.round((1 - head.remaining / head.total) * 20)}:${sel!.queue.length}`
     : "";
 
-  return [placing ?? "", selectedBuilding ?? "", completed, affordable, queue].join("|");
+  // Sell progress must force a panel rebuild so the bar actually moves.
+  const selling = sel?.sellRemaining !== undefined && sel?.sellTotal !== undefined
+    ? `sell:${Math.round((1 - sel.sellRemaining / sel.sellTotal) * 20)}`
+    : "";
+
+  return [placing ?? "", selectedBuilding ?? "", completed, affordable, queue, selling].join("|");
 }
 
 function makeItem(
@@ -1082,6 +1101,10 @@ renderer.app.ticker.add(() => {
     effects: renderer.effectCount,
     endState,
     audioLoaded: audio.loadedCount,
+    camX: renderer.camX,
+    camY: renderer.camY,
+    zoom: renderer.zoom,
+    tilePx: renderer.tilePx,
   };
 
   // Age out tracers, then draw what is left with a linear fade.

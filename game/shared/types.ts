@@ -159,6 +159,10 @@ export interface Building {
   rallyY?: number;
   /** Ticks until this building's weapon may fire again. */
   cooldown?: number;
+  /** Ticks left until the building is sold and removed; absent means not selling. */
+  sellRemaining?: number;
+  /** Total sell ticks, for progress display. */
+  sellTotal?: number;
 }
 
 /** A shot fired this tick, for the client to draw. Not simulation state. */
@@ -215,6 +219,8 @@ export interface Unit {
   pathGoalY?: number;
   /** Ticks spent making no progress, used to trigger a repath. */
   stuckFor?: number;
+  /** Number of times the unit has been stuck and repathed recently. Force-unsticks after repeated cycles. */
+  stuckCount?: number;
   /**
    * True while the unit is under automatic control.
    *

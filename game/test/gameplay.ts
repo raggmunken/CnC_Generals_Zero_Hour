@@ -170,6 +170,9 @@ section("Combat");
   const sim = arena();
   base(sim, 1, 30, 30);
   sim.economy(1).credits = 99999;
+  // Power plant so the turret stays online — low power takes turrets offline.
+  const pp = sim.placeBuilding(1, "power_plant", 30, 26)!;
+  pp.buildRemaining = 0;
   const tbar = sim.placeBuilding(1, "barracks", 34, 30)!;
   tbar.buildRemaining = 0; // turrets are gated behind a barracks
   const turret = sim.placeBuilding(1, "gun_turret", 26, 30)!;
@@ -278,7 +281,7 @@ section("Weapon roles and splash");
   function clearTime(defence: string, attacker: string, count: number): number {
     const sim = arena();
     sim.economy(1).credits = 99999;
-    for (const [type, x, y] of [["command_center", 40, 40], ["barracks", 46, 40], ["war_factory", 50, 40]] as const) {
+    for (const [type, x, y] of [["command_center", 40, 40], ["power_plant", 36, 40], ["power_plant", 38, 44], ["barracks", 46, 40], ["war_factory", 50, 40]] as const) {
       const b2 = sim.placeBuilding(1, type, x, y);
       if (b2) b2.buildRemaining = 0;
     }

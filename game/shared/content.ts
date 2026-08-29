@@ -187,7 +187,7 @@ export const UNITS: Record<string, UnitTypeDef> = {
     speed: 4.2, maxHp: 500, radius: 0.6, producedBy: "war_factory",
     role: "Main battle vehicle. Crushes infantry, fears rockets.",
     armour: "heavy", vision: 8,
-    weapon: { damage: 55, damageType: "cannon", range: 7, reload: 2.0 },
+    weapon: { damage: 60, damageType: "cannon", range: 7, reload: 1.8 },
   },
   aa_vehicle: {
     id: "aa_vehicle", name: "AA Vehicle", cost: 700, buildTime: 10,
@@ -203,8 +203,8 @@ export const UNITS: Record<string, UnitTypeDef> = {
     armour: "light", vision: 10,
     // Outranges everything, hits an area, and dies instantly if reached.
     weapon: {
-      damage: 70, damageType: "explosive", range: 13, reload: 4.0,
-      splash: { radius: 2.4, minFraction: 0.35 },
+      damage: 80, damageType: "explosive", range: 14, reload: 3.5,
+      splash: { radius: 2.6, minFraction: 0.3 },
     },
   },
   chopper: {
@@ -215,7 +215,7 @@ export const UNITS: Record<string, UnitTypeDef> = {
     // Rockets keep it honest against armour and other aircraft; the matrix
     // makes cannons and artillery pointless against it, which is the point of
     // air: it forces the opponent to build flak.
-    weapon: { damage: 34, damageType: "rocket", range: 7, reload: 1.6 },
+    weapon: { damage: 38, damageType: "rocket", range: 8, reload: 1.5 },
   },
 };
 
@@ -269,13 +269,14 @@ export const UNLOAD_RATE = 300;
 /** How close a harvester must be to a node or centre to work it. */
 export const HARVEST_REACH = 1.4;
 
-/** Starting credits. Enough for a supply centre and a little slack. */
-export const STARTING_CREDITS = 5000;
+/** Starting credits. Enough for a supply centre, power plant, and a harvester. */
+export const STARTING_CREDITS = 6000;
 
 /**
  * Production speed when demand exceeds supply.
  *
  * Generals brownouts stop production dead, which feels punishing without
- * teaching anything. Halving it makes the mistake legible and recoverable.
+ * teaching anything. Slowing to 35% makes the mistake legible and recoverable,
+ * while still being a sharp incentive to keep power ahead of demand.
  */
-export const LOW_POWER_SPEED = 0.5;
+export const LOW_POWER_SPEED = 0.35;

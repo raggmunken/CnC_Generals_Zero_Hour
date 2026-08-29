@@ -12,7 +12,7 @@ import { Terrain } from "../../shared/types.js";
 export const BASE_TILE_PX = 24;
 
 /** The transient effects the renderer knows how to draw. */
-export type EffectKind = "ping" | "attack" | "explosion" | "bigExplosion";
+export type EffectKind = "ping" | "attack" | "explosion" | "bigExplosion" | "dust" | "debris";
 
 /** Terrain enum -> atlas key. */
 const TERRAIN_SPRITE: Record<number, string> = {
@@ -186,7 +186,8 @@ export class Renderer {
     this.terrainSprite.visible = false;
     if (!this.sheet) return;
 
-    const TP = 24;                       // texture pixels per tile
+    // High Definition 48px resolution per tile for crystal clear terrain
+    const TP = 48;
     const canvas = document.createElement("canvas");
     canvas.width = width * TP;
     canvas.height = height * TP;
@@ -210,19 +211,11 @@ export class Renderer {
   }
 
   /**
-   * Soften the tile grid baked above.
-   *
-   * Three passes, all deterministic in the tile coordinates so a rebuild after
-   * a restart draws the same map:
-   *
-   * 1. Per-tile brightness jitter. One texture repeated ten thousand times
-   *    reads as wallpaper; a whisper of variation per tile reads as ground.
-   * 2. Seam gradients. Where two different kinds meet, each side bleeds a few
-   *    pixels of the other's colour across the boundary, so biomes grade into
-   *    each other instead of snapping at a pixel line.
-   * 3. Shorelines. Water meeting land gets a shallow tint on the water side
-   *    and a sand band on the land side -- the strongest single cue that a
-   *    river is a river and not a blue corridor.
+   * Advanced multi-pass organic terrain blending:
+   * 1. Micro-contrast variation across terrain plains
+   * 2. Directional elevation drop shadows from mountains and trees
+   * 3. Organic wavy biome seam blending using noise modulation
+   * 4. Realistic shoreline beach fringes and coastal water foam
    */
   private blendTerrain(
     ctx: CanvasRenderingContext2D,
@@ -236,8 +229,7 @@ export class Renderer {
     const css = (c: number, a: number): string =>
       `rgba(${(c >> 16) & 255},${(c >> 8) & 255},${c & 255},${a})`;
 
-    // 1. Jitter, at quarter-tile grain: per-tile jitter correlates with the
-    //    grid and reads as checkerboard; finer blocks break that up.
+    // 1. Organic micro-contrast variation
     const SUB = 4;
     const step = TP / SUB;
     for (let y = 0; y < height * SUB; y++) {
@@ -245,14 +237,41 @@ export class Renderer {
         let h = (x * 73856093) ^ (y * 19349663);
         h = (h ^ (h >> 13)) * 0x5bd1e995;
         const v = (((h >>> 0) % 100) / 100) * 2 - 1; // [-1, 1)
-        ctx.fillStyle = v < 0 ? `rgba(0,0,0,${-v * 0.03})` : `rgba(255,255,255,${v * 0.022})`;
+        ctx.fillStyle = v < 0 ? `rgba(0,0,0,${-v * 0.035})` : `rgba(255,255,255,${v * 0.025})`;
         ctx.fillRect(x * step, y * step, step, step);
       }
     }
 
-    // 2 + 3. Walk every interior edge once.
-    const DIRS: Array<[number, number, string]> = [
-      [1, 0, "E"], [0, 1, "S"], // W and N are the same seams from the other side
+    // 2. Directional Elevation Shadows: Mountains and Trees cast soft shadows onto adjacent lower ground
+    for (let y = 0; y < height; y++) {
+      for (let x = 0; x < width; x++) {
+        const here = at(x, y);
+        const isElevated = here === Terrain.Mountain || here === Terrain.Trees;
+        if (!isElevated) continue;
+
+        // Shadow cast towards south and east (light from top-left)
+        const east = at(x + 1, y);
+        if (east >= 0 && east !== Terrain.Mountain && east !== Terrain.Trees) {
+          const shadowGrad = ctx.createLinearGradient((x + 1) * TP, 0, (x + 1) * TP + TP * 0.35, 0);
+          shadowGrad.addColorStop(0, "rgba(0,0,0,0.45)");
+          shadowGrad.addColorStop(1, "rgba(0,0,0,0)");
+          ctx.fillStyle = shadowGrad;
+          ctx.fillRect((x + 1) * TP, y * TP, TP * 0.35, TP);
+        }
+        const south = at(x, y + 1);
+        if (south >= 0 && south !== Terrain.Mountain && south !== Terrain.Trees) {
+          const shadowGrad = ctx.createLinearGradient(0, (y + 1) * TP, 0, (y + 1) * TP + TP * 0.35);
+          shadowGrad.addColorStop(0, "rgba(0,0,0,0.45)");
+          shadowGrad.addColorStop(1, "rgba(0,0,0,0)");
+          ctx.fillStyle = shadowGrad;
+          ctx.fillRect(x * TP, (y + 1) * TP, TP, TP * 0.35);
+        }
+      }
+    }
+
+    // 3. Organic Biome Edge Blending & Shoreline System
+    const DIRS: Array<[number, number]> = [
+      [1, 0], [0, 1],
     ];
     for (let y = 0; y < height; y++) {
       for (let x = 0; x < width; x++) {
@@ -261,23 +280,22 @@ export class Renderer {
           const there = at(x + dx, y + dy);
           if (there < 0 || there === here) continue;
 
-          const horizontal = dx === 1; // seam between (x,y) and (x+dx,y+dy)
-          // Canvas coordinates of the seam line.
+          const horizontal = dx === 1;
           const sx = horizontal ? (x + 1) * TP : x * TP;
           const sy = horizontal ? y * TP : (y + 1) * TP;
 
           const waterEdge = here === Terrain.Water || there === Terrain.Water;
-          const band = waterEdge ? TP * 0.42 : TP * 0.3;
+          const band = waterEdge ? TP * 0.45 : TP * 0.35;
 
           for (const [, to, flip] of [[here, there, 0], [there, here, 1]] as const) {
             const g = horizontal
               ? ctx.createLinearGradient(sx + (flip ? band : -band), 0, sx, 0)
               : ctx.createLinearGradient(0, sy + (flip ? band : -band), 0, sy);
-            // Bleed the *neighbour's* colour across the seam, so each side
-            // grades into what is next to it.
+
             const color = TERRAIN_COLOR[to] ?? 0;
-            const strength = waterEdge ? 0.45 : 0.3;
+            const strength = waterEdge ? 0.5 : 0.35;
             g.addColorStop(0, css(color, 0));
+            g.addColorStop(0.7, css(color, strength * 0.6));
             g.addColorStop(1, css(color, strength));
             ctx.fillStyle = g;
             if (horizontal) {
@@ -288,28 +306,41 @@ export class Renderer {
           }
 
           if (waterEdge) {
-            // Sand band on the land side, shallow tint on the water side.
-            const landFlip = here === Terrain.Water ? 1 : 0; // side holding land
-            const sand = TP * 0.22;
+            // Golden sand beach band on land side
+            const landFlip = here === Terrain.Water ? 1 : 0;
+            const sand = TP * 0.26;
             const sg = horizontal
               ? ctx.createLinearGradient(sx + (landFlip ? sand : -sand), 0, sx, 0)
               : ctx.createLinearGradient(0, sy + (landFlip ? sand : -sand), 0, sy);
-            sg.addColorStop(0, "rgba(178,164,110,0)");
-            sg.addColorStop(1, "rgba(178,164,110,0.5)");
+            sg.addColorStop(0, "rgba(195,175,120,0)");
+            sg.addColorStop(0.6, "rgba(195,175,120,0.35)");
+            sg.addColorStop(1, "rgba(215,195,135,0.65)");
             ctx.fillStyle = sg;
             if (horizontal) ctx.fillRect(landFlip ? sx : sx - sand, sy, sand, TP);
             else ctx.fillRect(sx, landFlip ? sy : sy - sand, TP, sand);
 
-            const sh = TP * 0.3;
-            const waterFlip = here === Terrain.Water ? 0 : 1; // side holding water
+            // Shallow turquoise water tint on water side
+            const waterFlip = here === Terrain.Water ? 0 : 1;
+            const sh = TP * 0.35;
             const wg = horizontal
               ? ctx.createLinearGradient(sx + (waterFlip ? sh : -sh), 0, sx, 0)
               : ctx.createLinearGradient(0, sy + (waterFlip ? sh : -sh), 0, sy);
-            wg.addColorStop(0, "rgba(120,180,190,0)");
-            wg.addColorStop(1, "rgba(120,180,190,0.4)");
+            wg.addColorStop(0, "rgba(100,200,210,0)");
+            wg.addColorStop(0.5, "rgba(100,200,210,0.25)");
+            wg.addColorStop(1, "rgba(140,225,235,0.5)");
             ctx.fillStyle = wg;
             if (horizontal) ctx.fillRect(waterFlip ? sx : sx - sh, sy, sh, TP);
             else ctx.fillRect(sx, waterFlip ? sy : sy - sh, TP, sh);
+
+            // Crisp foam wave contour line at the water-land boundary
+            ctx.fillStyle = "rgba(240,250,255,0.4)";
+            if (horizontal) {
+              const fx = sx + (waterFlip ? -1 : 0);
+              ctx.fillRect(fx, sy, 2, TP);
+            } else {
+              const fy = sy + (waterFlip ? -1 : 0);
+              ctx.fillRect(sx, fy, TP, 2);
+            }
           }
         }
       }
@@ -560,6 +591,10 @@ export class Renderer {
     const dy = y - prev.y;
     if (dx * dx + dy * dy > 4e-4) {
       prev.a = Math.atan2(dy, dx) - Math.PI / 2;
+      // Spawn subtle movement dust for ground units
+      if (Math.random() < 0.25) {
+        this.spawnEffect("dust", prev.x + (Math.random() - 0.5) * 0.3, prev.y + (Math.random() - 0.5) * 0.3, 0.4);
+      }
       prev.x = x;
       prev.y = y;
     }
@@ -655,13 +690,21 @@ export class Renderer {
     return this.effects.length;
   }
 
-  /** Render order pings and explosions into the fx layer. */
+  /** Render order pings, dust particles, and explosions into the fx layer. */
   private drawEffects(now: number): void {
     const g = this.fxLayer;
     const live: typeof this.effects = [];
     for (const e of this.effects) {
       const age = now - e.born;
-      if (e.kind === "ping" || e.kind === "attack") {
+      if (e.kind === "dust") {
+        const dur = 400;
+        if (age < dur) {
+          live.push(e);
+          const t = age / dur;
+          const r = e.size * (0.3 + t * 0.8);
+          g.circle(e.x, e.y, r).fill({ color: 0x827d6c, alpha: 0.22 * (1 - t) });
+        }
+      } else if (e.kind === "ping" || e.kind === "attack") {
         const dur = 420;
         if (age < dur) {
           live.push(e);
@@ -679,22 +722,36 @@ export class Renderer {
         }
       } else if (e.kind === "explosion" || e.kind === "bigExplosion") {
         const big = e.kind === "bigExplosion";
-        const dur = big ? 750 : 500;
+        const dur = big ? 850 : 550;
         if (age < dur) {
           live.push(e);
           const t = age / dur;
-          const s = e.size * (big ? 1.6 : 1);
-          // Flash core, then a ring outrunning it, then smoke drifting up.
-          if (t < 0.35) {
-            const ft = t / 0.35;
-            g.circle(e.x, e.y, s * (0.4 + ft * 1.1)).fill({ color: 0xffe9a3, alpha: 0.85 * (1 - ft) });
+          const s = e.size * (big ? 1.7 : 1.1);
+
+          // Fiery flash core
+          if (t < 0.4) {
+            const ft = t / 0.4;
+            g.circle(e.x, e.y, s * (0.5 + ft * 1.2)).fill({ color: 0xfff6cf, alpha: 0.95 * (1 - ft) });
+            g.circle(e.x, e.y, s * (0.3 + ft * 0.8)).fill({ color: 0xffaa33, alpha: 0.8 * (1 - ft) });
           }
-          g.circle(e.x, e.y, s * (0.3 + t * 2.4))
-            .stroke({ color: 0xff9a4d, width: 0.14 * (1 - t) + 0.03, alpha: 0.8 * (1 - t) });
-          for (let k = 0; k < 3; k++) {
-            const a = (k / 3) * Math.PI * 2 + e.x; // deterministic per site
-            g.circle(e.x + Math.cos(a) * s * t * 0.9, e.y + Math.sin(a) * s * t * 0.9 - t * 0.5 * s, s * 0.34)
-              .fill({ color: 0x3a3733, alpha: 0.4 * (1 - t) });
+
+          // Expanding shockwave ring
+          g.circle(e.x, e.y, s * (0.35 + t * 2.6))
+            .stroke({ color: 0xff7722, width: 0.16 * (1 - t) + 0.04, alpha: 0.85 * (1 - t) });
+
+          // Flying debris sparks
+          for (let sp = 0; sp < (big ? 8 : 5); sp++) {
+            const ang = (sp * Math.PI * 2) / (big ? 8 : 5) + e.x * 3.7;
+            const dist = s * (0.4 + t * 2.2);
+            g.circle(e.x + Math.cos(ang) * dist, e.y + Math.sin(ang) * dist, 0.12 * (1 - t))
+              .fill({ color: 0xffdd44, alpha: 1 - t });
+          }
+
+          // Dark volumetric smoke clouds drifting upward
+          for (let k = 0; k < 4; k++) {
+            const a = (k / 4) * Math.PI * 2 + e.x;
+            g.circle(e.x + Math.cos(a) * s * t * 0.95, e.y + Math.sin(a) * s * t * 0.95 - t * 0.7 * s, s * 0.38)
+              .fill({ color: 0x2e2c29, alpha: 0.45 * (1 - t) });
           }
         }
       }

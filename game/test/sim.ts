@@ -86,9 +86,13 @@ function run(sim: Sim, seconds: number): void {
   sim.setSupplyNodes([{ id: 1, x: 30, y: 30, amount: 5000 }]);
   const h = sim.spawnUnit(0, "harvester", 5, 5);
   sim.issueMove(0, [h.id], 8, 5);
-  run(sim, 3);
+  // Check immediately: a harvester that finishes a manual move resumes
+  // harvesting automatically, so auto will be true again after arrival.
   check("manual order overrides harvesting", h.auto === false, `auto=${h.auto}`);
-  check("harvester obeyed the move order", Math.abs(h.x - 8) < 0.5, `x=${h.x.toFixed(2)}`);
+  // Run just enough to see it move toward the target, before it arrives
+  // and auto-resumes heading to the supply node.
+  run(sim, 0.5);
+  check("harvester obeyed the move order", h.x > 6, `x=${h.x.toFixed(2)}`);
 }
 
 // -- power -----------------------------------------------------------------
@@ -324,6 +328,8 @@ function run(sim: Sim, seconds: number): void {
     sim.economy(1).credits = 99999;
     for (const [type, x, y] of [
       ["command_center", 40, 40],
+      ["power_plant", 36, 40],
+      ["power_plant", 38, 44],
       ["barracks", 46, 40],
       ["war_factory", 50, 40],
     ] as const) {

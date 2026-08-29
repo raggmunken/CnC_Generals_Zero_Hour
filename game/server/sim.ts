@@ -7,7 +7,7 @@
  * loop with no clients attached.
  */
 import { acquireTarget, canHarm, damageFor, rangeTo, splashTargets, type Combatant } from "./combat.js";
-import { findPath, nearestReachable, smoothPath } from "./pathfind.js";
+import { findPath, nearestOpen, nearestReachable, smoothPath } from "./pathfind.js";
 import {
   BUILDINGS,
   buildingDef,
@@ -154,7 +154,9 @@ export class Sim {
     const sameGoal =
       u.pathGoalX !== undefined &&
       Math.hypot(u.pathGoalX - x, (u.pathGoalY ?? 0) - y) < 1.0;
-    if (sameGoal && u.path && u.path.length > 0) return;
+    // Skip repath only if the goal is the same AND no buildings have changed.
+    // A new building can block the existing path, so blockedDirty forces a recompute.
+    if (sameGoal && u.path && u.path.length > 0 && !this.blockedDirty) return;
 
     if (this.blockedDirty) this.rebuildBlocked();
 
@@ -543,7 +545,11 @@ export class Sim {
     for (const b of this.buildings.values()) {
       const def = buildingDef(b.type);
       if (b.cooldown && b.cooldown > 0) b.cooldown--;
-      if (!def.weapon || b.buildRemaining > 0) continue;
+      if (!def.weapon || b.buildRemaining > 0 || b.sellRemaining !== undefined) continue;
+
+      // Defensive structures go offline during a brownout: no power means no
+      // radar, no targeting, no firing. This is the C&C low-power punishment.
+      if (def.weapon && this.isLowPower(b.owner)) continue;
 
       const cx = b.x + def.size / 2;
       const cy = b.y + def.size / 2;
@@ -775,16 +781,23 @@ export class Sim {
     return b;
   }
 
-  /** Sell a building for a partial refund. Cannot sell the command center. */
+  /** Start selling a building. Takes half the build time, refunds 50% on completion. */
   sellBuilding(playerId: number, buildingId: number): boolean {
     const b = this.buildings.get(buildingId);
     if (!b || b.owner !== playerId) return false;
     if (b.type === "command_center") return false;
+    if (b.buildRemaining > 0) return false; // Can't sell while under construction.
+    if (b.sellRemaining !== undefined) return false; // Already selling.
     const def = buildingDef(b.type);
-    const refund = Math.floor(def.cost * 0.5);
-    this.economy(playerId).credits += refund;
-    this.buildings.delete(buildingId);
-    this.markBlockedDirty();
+    const sellTicks = Math.max(1, Math.round(def.buildTime * TICK_RATE / 2));
+    b.sellRemaining = sellTicks;
+    b.sellTotal = sellTicks;
+    // Clear production queue while selling, refunding the credits for each
+    // queued unit.
+    for (const item of b.queue) {
+      this.economy(playerId).credits += unitDef(item.unitType).cost;
+    }
+    b.queue.length = 0;
     return true;
   }
 
@@ -818,6 +831,7 @@ export class Sim {
     }
     for (const b of this.buildings.values()) {
       if (b.buildRemaining > 0) continue;
+      if (b.sellRemaining !== undefined) continue; // Being dismantled: no power.
       const e = this.economy(b.owner);
       const p = buildingDef(b.type).power;
       if (p >= 0) e.powerProduced += p;
@@ -828,13 +842,18 @@ export class Sim {
   /**
    * Production rate for a player.
    *
-   * A brownout halves output rather than stopping it. Generals stops dead,
-   * which punishes without teaching; halving makes the mistake obvious and
+   * A brownout cuts output to 35% rather than stopping it. Generals stops dead,
+   * which punishes without teaching; slowing makes the mistake obvious and
    * still recoverable.
    */
   private buildSpeed(playerId: number): number {
+    return this.isLowPower(playerId) ? LOW_POWER_SPEED : 1;
+  }
+
+  /** Whether a player's power demand exceeds supply. */
+  isLowPower(playerId: number): boolean {
     const e = this.economy(playerId);
-    return e.powerConsumed > e.powerProduced ? LOW_POWER_SPEED : 1;
+    return e.powerConsumed > e.powerProduced;
   }
 
   /**
@@ -882,6 +901,20 @@ export class Sim {
         continue; // A building under construction produces nothing.
       }
 
+      // A building being sold counts down; when it reaches zero the player
+      // gets 50% of the cost back and the building is removed. It can still
+      // be attacked and destroyed while selling — the enemy gets nothing.
+      if (b.sellRemaining !== undefined) {
+        b.sellRemaining = Math.max(0, b.sellRemaining - speed);
+        if (b.sellRemaining === 0) {
+          const def = buildingDef(b.type);
+          this.economy(b.owner).credits += Math.floor(def.cost * 0.5);
+          this.buildings.delete(b.id);
+          this.markBlockedDirty();
+        }
+        continue; // A building being sold produces nothing.
+      }
+
       const head = b.queue[0];
       if (!head) continue;
       head.remaining -= speed;
@@ -925,12 +958,12 @@ export class Sim {
   private nearestDropOff(owner: number, x: number, y: number, assignedId?: number): Building | null {
     if (assignedId !== undefined) {
       const b = this.buildings.get(assignedId);
-      if (b && b.owner === owner && b.type === "supply_center" && b.buildRemaining === 0) return b;
+      if (b && b.owner === owner && b.type === "supply_center" && b.buildRemaining === 0 && b.sellRemaining === undefined) return b;
     }
     let best: Building | null = null;
     let bestD = Infinity;
     for (const b of this.buildings.values()) {
-      if (b.owner !== owner || b.type !== "supply_center" || b.buildRemaining > 0) continue;
+      if (b.owner !== owner || b.type !== "supply_center" || b.buildRemaining > 0 || b.sellRemaining !== undefined) continue;
       const size = buildingDef(b.type).size;
       const d = Math.hypot(b.x + size / 2 - x, b.y + size / 2 - y);
       if (d < bestD) { bestD = d; best = b; }
@@ -996,6 +1029,13 @@ export class Sim {
       }
 
       case "unloading": {
+        // The supply centre may have been destroyed or sold mid-unload.
+        const drop = u.dropOffId !== undefined ? this.buildings.get(u.dropOffId) : undefined;
+        if (!drop || drop.buildRemaining > 0 || drop.sellRemaining !== undefined) {
+          u.dropOffId = undefined;
+          u.harvest = carrying > 0 ? "returning" : "seeking";
+          return;
+        }
         const give = Math.min(UNLOAD_RATE * DT, carrying);
         u.carrying = carrying - give;
         this.economy(u.owner).credits += Math.round(give);
@@ -1128,11 +1168,30 @@ export class Sim {
         const gx = u.targetX;
         const gy = u.targetY;
         this.clearPath(u);
+        u.stuckCount = (u.stuckCount ?? 0) + 1;
+
+        // After 3 repeated stuck-repath cycles, the unit is likely trapped
+        // between buildings with no pathable exit. Force-relocate it to the
+        // nearest open tile so it does not grind forever.
+        if (u.stuckCount >= 3) {
+          if (this.blockedDirty) this.rebuildBlocked();
+          const grid = this.gridFor(r);
+          const escape = nearestOpen(grid, this.map.width, this.map.height,
+            Math.floor(u.x), Math.floor(u.y), 10);
+          if (escape) {
+            u.x = escape.x + 0.5;
+            u.y = escape.y + 0.5;
+          }
+          u.stuckCount = 0;
+        }
+
         if (gx !== null && gy !== null) this.setDestination(u, gx, gy);
         u.stuckFor = 0;
       }
     } else {
       u.stuckFor = 0;
+      // Reset stuck cycle counter when the unit makes real progress.
+      if (moved > travel * 0.5) u.stuckCount = 0;
     }
   }
 

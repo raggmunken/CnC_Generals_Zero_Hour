@@ -65,10 +65,6 @@ function heuristic(ax: number, ay: number, bx: number, by: number): number {
 /**
  * Route between two tiles, or null if there is no way through.
  *
- * Uses bidirectional A*: searching from both ends simultaneously and meeting
- * in the middle, which explores roughly half the nodes of one-directional A*
- * and finds paths through tight gaps faster.
- *
  * `blocked` is 1 where a unit cannot stand. `maxNodes` bounds the search so a
  * request into a sealed pocket cannot stall the tick.
  */
@@ -78,7 +74,7 @@ export function findPath(
   height: number,
   from: Vec2,
   to: Vec2,
-  maxNodes = 12000,
+  maxNodes = 20000,
 ): Vec2[] | null {
   const sx = Math.floor(from.x);
   const sy = Math.floor(from.y);
@@ -91,7 +87,7 @@ export function findPath(
   // Ordering a unit into a rock is a normal thing for a player to do. Rather
   // than refusing, walk as close as possible: find the nearest open tile.
   if (blocked[ty * width + tx]) {
-    const near = nearestOpen(blocked, width, height, tx, ty, 8);
+    const near = nearestOpen(blocked, width, height, tx, ty, 12);
     if (!near) return null;
     tx = near.x;
     ty = near.y;
@@ -104,124 +100,80 @@ export function findPath(
   // If the start tile is blocked (unit inside a building that finished on it),
   // let it move to the nearest open tile first.
   if (blocked[start]) {
-    const near = nearestOpen(blocked, width, height, sx, sy, 8);
+    const near = nearestOpen(blocked, width, height, sx, sy, 12);
     if (!near) return null;
     const openStart = near.y * width + near.x;
     if (openStart === goal) return [{ x: near.x + 0.5, y: near.y + 0.5 }];
-    // Path from the open tile, then prepend it.
     const sub = findPath(blocked, width, height,
       { x: near.x + 0.5, y: near.y + 0.5 }, { x: tx + 0.5, y: ty + 0.5 }, maxNodes);
     if (!sub) return null;
     return [{ x: near.x + 0.5, y: near.y + 0.5 }, ...sub];
   }
 
-  // Bidirectional A*: two searches that meet in the middle.
-  const gScoreFwd = new Float32Array(width * height).fill(Infinity);
-  const gScoreBwd = new Float32Array(width * height).fill(Infinity);
-  const cameFromFwd = new Int32Array(width * height).fill(-1);
-  const cameFromBwd = new Int32Array(width * height).fill(-1);
-  const closedFwd = new Uint8Array(width * height);
-  const closedBwd = new Uint8Array(width * height);
-  const openFwd = new MinHeap();
-  const openBwd = new MinHeap();
+  const gScore = new Float32Array(width * height).fill(Infinity);
+  const cameFrom = new Int32Array(width * height).fill(-1);
+  const closed = new Uint8Array(width * height);
+  const open = new MinHeap();
 
-  gScoreFwd[start] = 0;
-  gScoreBwd[goal] = 0;
-  openFwd.push(start, heuristic(sx, sy, tx, ty));
-  openBwd.push(goal, heuristic(tx, ty, sx, sy));
+  gScore[start] = 0;
+  open.push(start, heuristic(sx, sy, tx, ty));
 
   let expanded = 0;
-  let meetingPoint = -1;
+  while (open.size > 0) {
+    const current = open.pop();
+    if (closed[current]) continue;
+    closed[current] = 1;
 
-  while (openFwd.size > 0 && openBwd.size > 0) {
-    // Expand the forward search one step.
-    const currentFwd = openFwd.pop();
-    if (closedFwd[currentFwd]) {} else {
-      closedFwd[currentFwd] = 1;
-      if (closedBwd[currentFwd]) { meetingPoint = currentFwd; break; }
-      if (++expanded > maxNodes) break;
-      expandNode(currentFwd, blocked, width, height, closedFwd, gScoreFwd, cameFromFwd, openFwd, tx, ty, true);
-    }
-
-    // Expand the backward search one step.
-    const currentBwd = openBwd.pop();
-    if (closedBwd[currentBwd]) {} else {
-      closedBwd[currentBwd] = 1;
-      if (closedFwd[currentBwd]) { meetingPoint = currentBwd; break; }
-      if (++expanded > maxNodes) break;
-      expandNode(currentBwd, blocked, width, height, closedBwd, gScoreBwd, cameFromBwd, openBwd, sx, sy, false);
-    }
-  }
-
-  if (meetingPoint === -1) return null;
-
-  // Reconstruct forward half: start -> meeting point.
-  const fwdPath: Vec2[] = [];
-  let cur = meetingPoint;
-  while (cur !== -1) {
-    fwdPath.push({ x: (cur % width) + 0.5, y: ((cur / width) | 0) + 0.5 });
-    cur = cameFromFwd[cur]!;
-  }
-  fwdPath.reverse();
-  fwdPath.shift(); // drop the tile the unit is already standing on
-
-  // Reconstruct backward half: meeting point -> goal.
-  const bwdPath: Vec2[] = [];
-  cur = cameFromBwd[meetingPoint]!;
-  while (cur !== -1) {
-    bwdPath.push({ x: (cur % width) + 0.5, y: ((cur / width) | 0) + 0.5 });
-    cur = cameFromBwd[cur]!;
-  }
-
-  return [...fwdPath, ...bwdPath];
-}
-
-/** Expand one node in the A* search. Shared between forward and backward. */
-function expandNode(
-  current: number,
-  blocked: Uint8Array,
-  width: number,
-  height: number,
-  closed: Uint8Array,
-  gScore: Float32Array,
-  cameFrom: Int32Array,
-  open: MinHeap,
-  tx: number,
-  ty: number,
-  isForward: boolean,
-): void {
-  const cx = current % width;
-  const cy = (current / width) | 0;
-
-  for (let dy = -1; dy <= 1; dy++) {
-    for (let dx = -1; dx <= 1; dx++) {
-      if (dx === 0 && dy === 0) continue;
-      const nx = cx + dx;
-      const ny = cy + dy;
-      if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-
-      const ni = ny * width + nx;
-      if (blocked[ni] || closed[ni]) continue;
-
-      // No cutting corners: a diagonal is only legal if both orthogonal
-      // neighbours are open, or units clip through the corners of buildings.
-      if (dx !== 0 && dy !== 0) {
-        if (blocked[cy * width + nx] || blocked[ny * width + cx]) continue;
+    if (current === goal) {
+      // Reconstruct path.
+      const out: Vec2[] = [];
+      let cur = current;
+      while (cur !== -1) {
+        out.push({ x: (cur % width) + 0.5, y: ((cur / width) | 0) + 0.5 });
+        cur = cameFrom[cur]!;
       }
+      out.reverse();
+      out.shift(); // drop the tile the unit is already standing on
+      return out;
+    }
 
-      const step = dx !== 0 && dy !== 0 ? SQRT2 : 1;
-      const tentative = gScore[current]! + step;
-      if (tentative >= gScore[ni]!) continue;
+    if (++expanded > maxNodes) break;
 
-      cameFrom[ni] = current;
-      gScore[ni] = tentative;
-      open.push(ni, tentative + heuristic(nx, ny, tx, ty));
+    const cx = current % width;
+    const cy = (current / width) | 0;
+
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+
+        const ni = ny * width + nx;
+        if (blocked[ni] || closed[ni]) continue;
+
+        // No cutting corners: a diagonal is only legal if both orthogonal
+        // neighbours are open, or units clip through the corners of buildings.
+        if (dx !== 0 && dy !== 0) {
+          if (blocked[cy * width + nx] || blocked[ny * width + cx]) continue;
+        }
+
+        const step = dx !== 0 && dy !== 0 ? SQRT2 : 1;
+        const tentative = gScore[current]! + step;
+        if (tentative >= gScore[ni]!) continue;
+
+        cameFrom[ni] = current;
+        gScore[ni] = tentative;
+        open.push(ni, tentative + heuristic(nx, ny, tx, ty));
+      }
     }
   }
+
+  return null;
 }
 
 /** Nearest open tile within a radius, for destinations inside obstacles. */
-function nearestOpen(
+export function nearestOpen(
   blocked: Uint8Array,
   width: number,
   height: number,
@@ -244,10 +196,11 @@ function nearestOpen(
 }
 
 /**
- * Find the nearest reachable tile to a destination, using BFS from the goal.
+ * Find the nearest reachable tile to a destination.
  *
- * When A* fails (no path exists), this finds the closest tile that IS
- * reachable from the start, so the unit walks as far as it can instead of
+ * When A* fails (no path exists), this does a BFS from the start to find all
+ * reachable tiles, then returns the one closest (by Euclidean distance) to
+ * the destination. This lets the unit walk as far as it can instead of
  * grinding against a wall.
  */
 export function nearestReachable(
@@ -266,44 +219,51 @@ export function nearestReachable(
   if (sx < 0 || sy < 0 || sx >= width || sy >= height) return null;
   if (tx < 0 || ty < 0 || tx >= width || ty >= height) return null;
 
-  // BFS outward from the destination, return the first tile reachable
-  // from the start. This is O(r^2) but only runs when A* fails.
+  const start = sy * width + sx;
+  if (blocked[start]) return null;
+
+  // BFS from start, tracking the closest reachable tile to the destination.
   const visited = new Uint8Array(width * height);
-  const queue: number[] = [ty * width + tx];
-  visited[ty * width + tx] = 1;
-  const startTile = sy * width + sx;
+  const queue: number[] = [start];
+  visited[start] = 1;
 
-  let radius = 0;
-  while (queue.length > 0 && radius < maxR) {
-    const batchSize = queue.length;
-    for (let i = 0; i < batchSize; i++) {
-      const current = queue.shift()!;
-      const cx = current % width;
-      const cy = (current / width) | 0;
+  let best: Vec2 | null = null;
+  let bestDist = Infinity;
 
-      // Can we path from start to this tile?
-      if (!blocked[current]) {
-        const path = findPath(blocked, width, height, from,
-          { x: cx + 0.5, y: cy + 0.5 }, 4000);
-        if (path !== null) return { x: cx + 0.5, y: cy + 0.5 };
-      }
+  while (queue.length > 0) {
+    const current = queue.shift()!;
+    const cx = current % width;
+    const cy = (current / width) | 0;
 
-      for (let dy = -1; dy <= 1; dy++) {
-        for (let dx = -1; dx <= 1; dx++) {
-          if (dx === 0 && dy === 0) continue;
-          const nx = cx + dx;
-          const ny = cy + dy;
-          if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
-          const ni = ny * width + nx;
-          if (visited[ni]) continue;
-          visited[ni] = 1;
-          queue.push(ni);
+    // Track closest reachable tile to destination.
+    const dist = Math.hypot(cx - tx, cy - ty);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = { x: cx + 0.5, y: cy + 0.5 };
+    }
+
+    // Stop if we've searched far enough.
+    if (bestDist <= 1) break;
+
+    for (let dy = -1; dy <= 1; dy++) {
+      for (let dx = -1; dx <= 1; dx++) {
+        if (dx === 0 && dy === 0) continue;
+        const nx = cx + dx;
+        const ny = cy + dy;
+        if (nx < 0 || ny < 0 || nx >= width || ny >= height) continue;
+        const ni = ny * width + nx;
+        if (visited[ni] || blocked[ni]) continue;
+        // No cutting corners on diagonals.
+        if (dx !== 0 && dy !== 0) {
+          if (blocked[cy * width + nx] || blocked[ny * width + cx]) continue;
         }
+        visited[ni] = 1;
+        queue.push(ni);
       }
     }
-    radius++;
   }
-  return null;
+
+  return best;
 }
 
 /** Is the straight line between two points clear? Used to shorten paths. */

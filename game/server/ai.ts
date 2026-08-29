@@ -53,9 +53,9 @@ export interface Tuning {
  * did, and it produces an opponent that is annoying rather than better.
  */
 export const TUNING: Record<Difficulty, Tuning> = {
-  easy: { thinkInterval: 3.0, attackThreshold: 2400, harvesterTarget: 2, maxProduction: 2 },
-  normal: { thinkInterval: 2.0, attackThreshold: 2400, harvesterTarget: 3, maxProduction: 2 },
-  hard: { thinkInterval: 1.2, attackThreshold: 2400, harvesterTarget: 3, maxProduction: 3 },
+  easy: { thinkInterval: 3.0, attackThreshold: 1800, harvesterTarget: 2, maxProduction: 2 },
+  normal: { thinkInterval: 2.0, attackThreshold: 1800, harvesterTarget: 3, maxProduction: 3 },
+  hard: { thinkInterval: 1.2, attackThreshold: 1800, harvesterTarget: 3, maxProduction: 3 },
 };
 
 // MEASURED STATUS, so the next person does not repeat the search:
@@ -201,6 +201,10 @@ export class AIPlayer {
   private lastAttackY?: number;
   /** True while the army is committed to an attack. Hysteresis, see below. */
   private committed = false;
+  /** How many attack waves have been launched. Resets economy priority after losses. */
+  private attackWaves = 0;
+  /** Timestamp of last attack commitment, to detect stale committed state. */
+  private lastCommitTick = 0;
 
   constructor(
     private readonly sim: Sim,
@@ -332,9 +336,19 @@ export class AIPlayer {
       return;
     }
 
-    // Do not spend the harvester money on structures: income first, or the
-    // base is a monument rather than an economy.
-    const needsHarvesters = this.myUnits("harvester").length < this.tuning.harvesterTarget;
+    // Sustained economy: build additional supply centers so harvesters have
+    // drop-off points and income scales into late game. One center stalls
+    // after the nearby pile depletes and the long walk kills throughput.
+    const supplyCenters = has("supply_center");
+    const harvesters = this.myUnits("harvester").length;
+    if (supplyCenters < 3 && eco.credits > 2500 && harvesters >= this.tuning.harvesterTarget) {
+      if (this.tryBuild("supply_center")) return;
+    }
+
+    // Scale harvester target with supply centers: each center supports 2-3
+    // harvesters, so more centers means more income means more army.
+    const scaledHarvesterTarget = this.tuning.harvesterTarget + (supplyCenters - 1) * 2;
+    const needsHarvesters = harvesters < scaledHarvesterTarget;
     const reserve = needsHarvesters ? UNITS.harvester!.cost : 0;
     if (eco.credits < reserve) return;
 
@@ -356,11 +370,12 @@ export class AIPlayer {
     // Expand production up to the difficulty's cap, once there is money spare
     // to keep the extra buildings busy.
     const production = has("barracks") + has("war_factory");
-    if (production < this.tuning.maxProduction + 2) {
-      if (eco.credits > 3000 && has("barracks") <= has("war_factory")) {
+    const productionCap = this.tuning.maxProduction + 2;
+    if (production < productionCap) {
+      if (eco.credits > 2500 && has("barracks") <= has("war_factory")) {
         if (this.tryBuild("barracks")) return;
       }
-      if (eco.credits > 4000) {
+      if (eco.credits > 3500) {
         if (this.tryBuild("war_factory")) return;
       }
     }
@@ -382,10 +397,16 @@ export class AIPlayer {
     const eco = this.sim.economy(this.playerId);
 
     // Harvesters pay for everything else, so they come first.
-    const supply = this.myBuildings("supply_center")[0];
-    if (supply && this.myUnits("harvester").length < this.tuning.harvesterTarget) {
-      if (eco.credits >= UNITS.harvester!.cost && supply.queue.length === 0) {
-        this.sim.queueUnit(this.playerId, supply.id, "harvester");
+    // Scale target with supply centers for sustained income growth.
+    const supplyCenters = this.myBuildings("supply_center");
+    const harvesterTarget = this.tuning.harvesterTarget + Math.max(0, supplyCenters.length - 1) * 2;
+    const harvesters = this.myUnits("harvester").length;
+    if (harvesters < harvesterTarget) {
+      // Queue at the supply center with the shortest queue.
+      const idle = supplyCenters.filter((s) => s.queue.length === 0);
+      const target = idle[0] ?? supplyCenters[0];
+      if (target && eco.credits >= UNITS.harvester!.cost) {
+        this.sim.queueUnit(this.playerId, target.id, "harvester");
         return;
       }
     }
@@ -451,8 +472,11 @@ export class AIPlayer {
     // until the army is genuinely spent.
     if (this.committed && value < this.tuning.attackThreshold * 0.35) {
       this.committed = false;
+      this.attackWaves++;
+      this.massing.clear();
     } else if (!this.committed && value >= this.tuning.attackThreshold) {
       this.committed = true;
+      this.lastCommitTick = this.sim.tick;
     }
 
     if (!this.committed) {
@@ -468,6 +492,7 @@ export class AIPlayer {
         });
       }
 
+      // Scout to find the enemy base.
       if (this.model.isBlind() && target) {
         const scout = combat.find((u) => u.type === "infantry");
         if (scout) {

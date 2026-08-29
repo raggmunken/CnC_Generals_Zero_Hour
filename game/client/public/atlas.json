@@ -1,7 +1,7 @@
 {
   "cell": 128,
   "sheet": "sprites.png",
-  "note": "Sprites are drawn neutral grey and tinted per player at runtime. `tiles` is the element's footprint in world tiles; the renderer scales the cell to that. Redraw cells in sprites.png at the same grid, or redraw the guide and re-export.",
+  "note": "Tactical HD Sprite Atlas with seamless textures and military hardware sprites.",
   "sprites": {
     "terrain.ground": {
       "x": 0,
@@ -163,8 +163,16 @@
       "tiles": 1,
       "label": "Artillery"
     },
-    "overlay.supply": {
+    "unit.chopper": {
       "x": 512,
+      "y": 256,
+      "w": 128,
+      "h": 128,
+      "tiles": 1,
+      "label": "Attack Chopper"
+    },
+    "overlay.supply": {
+      "x": 640,
       "y": 256,
       "w": 128,
       "h": 128,
@@ -172,7 +180,7 @@
       "label": "Supply Pile"
     },
     "overlay.selection": {
-      "x": 640,
+      "x": 768,
       "y": 256,
       "w": 128,
       "h": 128,
@@ -180,12 +188,12 @@
       "label": "Selection Ring"
     },
     "overlay.rally": {
-      "x": 768,
+      "x": 896,
       "y": 256,
       "w": 128,
       "h": 128,
       "tiles": 1,
-      "label": "Rally Marker"
+      "label": "Rally Point"
     }
   }
 }
