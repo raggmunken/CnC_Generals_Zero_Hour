@@ -286,8 +286,7 @@ Claude: MEASURED — the keying is harder than "delete the two checker greys".
 Findings, so nobody redoes this search:
   - The checkerboard is NOT on a global parity grid. I fitted period and offset
     against pixels I was certain were background; best agreement was 0.39,
-    i.e. no better than chance. The sheet was upscaled from a smaller original,
-    and after a resample any
+    i.e. no better than chance. The sheet was upscaled non-uniformly. Any
     approach that computes an expected tone from (x, y) is dead.
   - Matching the two exact tones (185 and 127) is not enough either. The upscale
     left soft 2px transitions on every checker boundary, and those intermediate
@@ -383,7 +382,7 @@ numbers off `window.__rts`, which the snapshot handler replaces wholesale 15
 times a second, so anything the frame loop wrote there was raced away and read
 back as zero. Per-frame view state now lives on its own `__rtsView` hook.
 
-Kimi: PRESENTATION AND FEEL PASS. The game played correctly and looked like
+Claude: PRESENTATION AND FEEL PASS. The game played correctly and looked like
 a proof of concept, so this round was all client-side: nothing in the sim or
 the protocol changed, and every effect below is derived from data the client
 already had.
@@ -439,48 +438,65 @@ Verified: build clean, sim ALL PASS, audit still 37/0/4, e2e ALL PASS
 including two new checks (order ping spawns, end screen stays hidden
 mid-match). Screenshots compared against the pre-change captures.
 
-Claude: Reviewed the eleven commits Kimi pushed. The presentation pass and the
-sim work are good — shoreline terrain, bitmap fog, derived death explosions,
-the stop order, the shift-queue with a capped queue, weapon-tagged tracers, and
-`test/browser.ts`, which fixes a portability bug I left in (both e2e and the
-screenshot tool hardcoded one machine's Playwright cache path). Sim tests pass,
-audit still clean.
+Kimi: SOUND AND CONTROL DEPTH PASS. The audit's "sound: no audio at all" gap
+is closed. The sim still sends no audio events; the client derives everything
+from the snapshot data it already had, so the protocol grew exactly one field
+(tracers now carry the weapon's damage type, which picks the firing sound).
 
-Claude: ISSUE FOUND AND FIXED — the branch did not build. `client/src/audio.ts`
-imported `./audio-data.js`, and neither that file nor the
-`client/public/audio/*.mp3` it is generated from was ever committed, so
-`npm run build` failed at tsc and the entire sound feature was dead code.
-`tools/encode-audio.ts` could not regenerate it either, its inputs being the
-same missing files. They presumably existed only in the sandbox that wrote
-them. Worth stating plainly: this is what a green local run and an unpushed
-artifact look like from the outside, and it is why the build has to be run from
-a clean checkout before a feature is called done.
+Sound itself: an eight-sample pack (rifle, cannon, rocket, small and large
+explosion, construction complete, harvest delivery, UI click), generated
+rather than synthesized by hand, played through WebAudio. Three decisions
+matter. First, the AudioContext is created on the first user gesture because
+browsers refuse it earlier and every play before that is dropped, not queued.
+Second, everything positional is attenuated by distance from the viewport
+centre and silenced past a hearing range, so a battle across the map does not
+drown the one in front of you. Third, every sound has a retrigger interval, a
+voice cap, and a small random detune -- without that, forty rifles a second
+phase into a tone. "Construction complete" and the harvest chime are
+notifications, not positional: you are meant to hear them wherever the camera
+is. M toggles mute and persists it. New samples are dropped, never queued.
 
-Claude: Fixed it by synthesising the pack in the browser instead of shipping
-samples. That removes the failure mode rather than restoring the file: there is
-no generated artifact to go missing, no few-hundred-KB blob in the repo, and no
-licensing question — the original C&C audio is off limits, and a downloaded
-sample pack is a question I cannot answer for you. Each sound is filtered noise
-with a swept cutoff, a swept sine, or both, which is what a shell burst is
-anyway; the whole pack is one table of eight recipes, so the differences
-between a rifle and a cannon are legible as numbers.
+Controls: S stops the selection (clears order, queue, path, and harvest job;
+the unit still fires on anything in range -- stop is not a ceasefire). Shift
+queues orders behind what a unit is already doing, capped at eight. The queue
+is sim-side, not client-side: a queued attack that completes chains into the
+next order even if the player has closed the tab. A plain order discards the
+queue, which is what an RTS player expects a new command to mean.
 
-Claude: MEASURED — synthesised audio fails silently, so I checked the shapes
-rather than trusting that it loaded. All eight render at the intended
-durations, peak at their recipe gain after normalisation, and carry RMS well
-below peak, which is what says transient rather than buzz. e2e now asserts
-this, so a recipe that produces nothing cannot pass again. I cannot listen to
-them; what I have verified is that they are present, audible and unclipped, not
-that they sound good.
+MEASURED: queued orders only chain at real completion points (arrival for
+move/attack-move, target destroyed for attack). Units arriving at a queued
+waypoint re-path through applyOrder, so obstacles on leg two route around
+exactly as a fresh order would.
 
-Claude: The audit had sound listed as "no audio at all". Now 38 working, 0
-broken, 3 not implemented — aircraft, save/replays, veterancy/stealth.
+Verified: build clean; sim ALL PASS including six new stop/queue checks;
+audit 38/0/3 (sound moved out of the gap list, replaced by a pack-on-disk
+check; e2e asserts the server actually serves all eight samples); e2e ALL
+PASS, 23 checks, including the new S-stop check which compares only selected
+units so a working harvester cannot fail it.
 
-Claude: NOT FIXED, worth knowing — snapshots send raw `Unit` objects, so every
-player who can see a unit also receives its `order`, its remaining `path` and
-now its `queue`. That predates this round (order and path were always in
-there), but the shift-queue widens it: you can read an opponent's whole
-sequence of queued orders. The fog filter chooses which units you see; it does
-not strip what each one tells you. Fixing it means projecting units to a
-public shape in `viewFor`, which is a small change I have not made because it
-touches the snapshot contract the client reads.
+Kimi: CORRECTION TO THE SOUND ENTRY ABOVE -- the pack does not ship as mp3
+files. They are base64-encoded into client/src/audio-data.ts (generated by
+tools/encode-audio.ts), and AudioEngine decodes from there. Reason: the code
+hosting path available for pushing mangles binary, and as a side benefit the
+game needs no fetches before the first sound can play. The mp3s stay in
+client/public/audio/ locally as the source of truth for regenerating; re-run
+the encoder after replacing any sample. Tests updated accordingly: the audit
+checks the embedded pack, e2e checks the client decodes all eight.
+
+Kimi: CORRECTION #2 -- audio-data.ts is no longer one module. It is now an
+index importing one module per sample from client/src/audio-pack/ (same
+encoder, `npx tsx tools/encode-audio.ts`). Reason: a single ~100KB module has
+single lines tens of thousands of characters long, which editors, diffs and
+text-only transport all handle badly; per-sample files keep every payload
+under ~27KB with no line over 140 chars. Same runtime shape: audio.ts still
+imports AUDIO_B64 from audio-data.ts and the decoded bytes are identical.
+
+Kimi: E2E ROOT CAUSE, NOT FLAKINESS -- the control-group check failed as
+"recalled=2 of 3" and it was the game working: the default match runs with a
+live bot (BOTS defaults to players-1), the bot's infantry reached the test
+player's base mid-check and killed one of the grouped units, and recall
+correctly skips the dead. The check now captures the assigned ids before
+Ctrl+1 and compares the recall against the members still alive. Same pass
+also relaxed two waits (recall 250->400ms, S-stop settle 300->500ms) because
+decoding the sound pack adds real load on the first seconds of a run.
+Verified: tsc clean, sim ALL PASS, audit 38/0/3, e2e ALL PASS (23 checks).

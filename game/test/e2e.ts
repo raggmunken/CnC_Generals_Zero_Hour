@@ -60,6 +60,13 @@ await page.screenshot({ path: "/tmp/rts-selected.png" });
 // Control groups, tested here rather than later: by the end of the run the
 // units have been ordered across the map and may no longer be on screen, which
 // makes a re-selection flaky for reasons unrelated to control groups.
+// The match has a live bot, and a unit can genuinely die between assign and
+// recall -- that is the game working, not the group failing. Capture the ids
+// being assigned now; the check below compares the recall against the members
+// still alive, not the count at assign time.
+const assignedIds: number[] = await page.evaluate(
+  () => (window as unknown as { __rtsView?: { selectedIds?: number[] } }).__rtsView?.selectedIds ?? [],
+);
 await page.keyboard.down("Control");
 await page.keyboard.press("Digit1");
 await page.keyboard.up("Control");
@@ -67,12 +74,17 @@ await page.keyboard.press("Escape");
 await page.waitForTimeout(200);
 const cleared = /selected (\d+)/.exec((await page.locator("#hud").textContent()) ?? "")?.[1];
 await page.keyboard.press("Digit1");
-await page.waitForTimeout(250);
+await page.waitForTimeout(400);
 const recalled = /selected (\d+)/.exec((await page.locator("#hud").textContent()) ?? "")?.[1];
+const aliveInGroup = await page.evaluate((ids: number[]) => {
+  const units = ((window as any).__rts?.units ?? []) as Array<{ id: number }>;
+  const present = new Set(units.map((u) => u.id));
+  return ids.filter((id) => present.has(id)).length;
+}, assignedIds);
 check(
   "control group assigns and recalls",
-  cleared === "0" && Number(recalled) === selCount && selCount > 0,
-  `selected=${selCount} cleared=${cleared} recalled=${recalled}`,
+  cleared === "0" && Number(recalled) === aliveInGroup && aliveInGroup > 0,
+  `selected=${selCount} cleared=${cleared} recalled=${recalled} aliveInGroup=${aliveInGroup}`,
 );
 
 // 4. The real test: order a move and confirm the server moved the units.
@@ -113,7 +125,7 @@ check("sound pack decodes in the client", audioLoaded === 8, `loaded=${audioLoad
 await page.mouse.click(900, 550, { button: "right" });
 await page.waitForTimeout(250);
 await page.keyboard.press("KeyS");
-await page.waitForTimeout(300);
+await page.waitForTimeout(500);
 const stoppedAt = await readUnitPositions();
 await page.waitForTimeout(800);
 const afterStop = await readUnitPositions();
