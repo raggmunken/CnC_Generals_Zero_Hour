@@ -7,123 +7,223 @@
     <style>
       :root { color-scheme: dark; }
       * { margin: 0; padding: 0; box-sizing: border-box; }
-      html, body { height: 100%; overflow: hidden; background: #11150f; }
+      html, body { height: 100%; overflow: hidden; background: #0d1114; }
       body {
-        font: 13px/1.4 ui-monospace, SFMono-Regular, Menlo, monospace;
-        color: #cfe0c3;
+        font: 13px/1.45 "Segoe UI", system-ui, -apple-system, "Noto Sans", sans-serif;
+        color: #e8e8e2;
         /* The map is dragged and box-selected; native gestures fight both. */
         touch-action: none;
         user-select: none;
       }
       canvas { display: block; }
+
+      /* Shared glass surface for every UI element floating over the map. */
+      .glass {
+        background: rgba(16, 20, 24, 0.72);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 14px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+      }
+
+      /* -- status chips, top left ------------------------------------------ */
       #hud {
-        position: fixed; top: 0; left: 0; padding: 8px 12px;
-        background: rgba(10, 14, 8, 0.72);
-        border-bottom-right-radius: 6px;
+        position: fixed; top: 12px; left: 12px;
+        display: flex; gap: 8px; flex-wrap: wrap; align-items: center;
+        max-width: calc(100vw - 460px);
         pointer-events: none;
-        white-space: pre;
       }
+      #hud .chip {
+        display: inline-flex; align-items: center; gap: 7px;
+        padding: 7px 14px; font-size: 13px; font-weight: 600;
+        background: rgba(16, 20, 24, 0.72);
+        backdrop-filter: blur(8px);
+        -webkit-backdrop-filter: blur(8px);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 12px;
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.45);
+        white-space: nowrap;
+      }
+      #hud .chip small { font-weight: 400; color: #9aa4ad; font-size: 10px; }
+      #hud .dot { color: #7ee787; }
+      #hud .coin { color: #ffd76e; font-weight: 700; }
+      #hud .bolt { color: #7ee787; }
+      #hud .chip.warn { border-color: rgba(232, 135, 127, 0.5); color: #e8877f; }
+      #hud .chip.mode {
+        background: rgba(232, 135, 127, 0.16);
+        border-color: rgba(232, 135, 127, 0.45);
+        color: #ffb3ac; letter-spacing: 1.5px; font-size: 11px;
+      }
+      #hud .chip.summary { font-weight: 400; color: #aeb8c0; font-size: 12px; }
+      #hud .chip:empty { display: none; }
+
+      /* -- new match button, top right -------------------------------------- */
       #lobby-open {
-        position: fixed; top: 0; right: 220px;
-        background: rgba(10, 14, 8, 0.86); color: #cfe0c3;
-        border: 1px solid #39442e; border-bottom-left-radius: 6px;
-        border-top: 0; border-right: 0;
-        padding: 7px 12px; font: inherit; letter-spacing: 1px; cursor: pointer;
+        position: fixed; top: 12px; right: 12px;
+        padding: 9px 20px; font: inherit; font-size: 12px; font-weight: 700;
+        letter-spacing: 1.5px; color: #0d1114; cursor: pointer;
+        background: linear-gradient(135deg, #7ee787, #3fb950);
+        border: none; border-radius: 12px;
+        box-shadow: 0 4px 14px rgba(63, 185, 80, 0.35);
       }
-      #lobby-open:hover { background: #2e3a25; }
+      #lobby-open:hover { filter: brightness(1.1); }
+
+      /* -- lobby ------------------------------------------------------------ */
       #lobby {
         position: fixed; inset: 0; z-index: 10;
-        background: rgba(6, 9, 5, 0.72);
+        background: rgba(8, 11, 13, 0.6);
+        backdrop-filter: blur(4px);
+        -webkit-backdrop-filter: blur(4px);
         display: flex; align-items: center; justify-content: center;
       }
       #lobby[hidden], #endscreen[hidden] { display: none; }
+      .lobby-card {
+        background: rgba(16, 20, 24, 0.85);
+        backdrop-filter: blur(10px);
+        -webkit-backdrop-filter: blur(10px);
+        border: 1px solid rgba(255, 255, 255, 0.09);
+        border-radius: 18px;
+        box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6);
+        padding: 26px 28px; width: 340px;
+      }
+      .lobby-card h2 { font-size: 15px; letter-spacing: 3px; margin-bottom: 18px; color: #7ee787; }
+      .lobby-card label {
+        display: flex; justify-content: space-between; align-items: center;
+        margin-bottom: 12px; gap: 12px; font-size: 12.5px; color: #aeb8c0;
+      }
+      .lobby-card select, .lobby-card input {
+        background: rgba(255, 255, 255, 0.05); color: #e8e8e2;
+        border: 1px solid rgba(255, 255, 255, 0.12);
+        border-radius: 8px; padding: 7px 10px; font: inherit; width: 140px;
+      }
+      .lobby-card .note { color: #6f7a84; font-size: 11px; margin: 14px 0 18px; }
+      .lobby-actions { display: flex; gap: 10px; justify-content: flex-end; }
+      .lobby-actions button {
+        background: linear-gradient(135deg, #7ee787, #3fb950);
+        color: #0d1114; border: none; font-weight: 700;
+        border-radius: 10px; padding: 8px 20px; font: inherit; font-size: 12.5px; cursor: pointer;
+      }
+      .lobby-actions button.ghost {
+        background: rgba(255, 255, 255, 0.06); color: #aeb8c0;
+        border: 1px solid rgba(255, 255, 255, 0.1); font-weight: 400;
+      }
+      .lobby-actions button:hover { filter: brightness(1.12); }
+
+      /* -- end screen -------------------------------------------------------- */
       #endscreen {
         position: fixed; inset: 0; z-index: 9;
-        background: rgba(6, 9, 5, 0.55);
+        background: rgba(8, 11, 13, 0.45);
+        backdrop-filter: blur(3px);
+        -webkit-backdrop-filter: blur(3px);
         display: flex; align-items: center; justify-content: center;
         pointer-events: none;
       }
       .end-card { text-align: center; }
       #end-title {
         font-size: 54px; letter-spacing: 14px; font-weight: 700;
-        text-shadow: 0 2px 18px rgba(0,0,0,0.9);
+        text-shadow: 0 2px 18px rgba(0, 0, 0, 0.9);
       }
-      #end-detail { opacity: 0.8; margin: 10px 0 20px; }
+      #end-detail { color: #aeb8c0; margin: 10px 0 22px; }
       .end-actions { display: flex; gap: 10px; justify-content: center; }
       .end-actions button {
         pointer-events: auto;
-        background: #33421f; color: #e6f0de; border: 1px solid #5c7049;
-        border-radius: 4px; padding: 8px 18px; font: inherit; cursor: pointer;
+        background: linear-gradient(135deg, #7ee787, #3fb950);
+        color: #0d1114; border: none; font-weight: 700;
+        border-radius: 10px; padding: 9px 22px; font: inherit; cursor: pointer;
       }
-      .end-actions button.ghost { background: #232b1c; border-color: #39442e; }
-      .end-actions button:hover { filter: brightness(1.2); }
-      .lobby-card {
-        background: #1a2016; border: 1px solid #3c4a33; border-radius: 8px;
-        padding: 22px 24px; width: 320px;
+      .end-actions button.ghost {
+        background: rgba(255, 255, 255, 0.06); color: #aeb8c0;
+        border: 1px solid rgba(255, 255, 255, 0.1); font-weight: 400;
       }
-      .lobby-card h2 { font-size: 15px; letter-spacing: 2px; margin-bottom: 16px; color: #9fe870; }
-      .lobby-card label {
-        display: flex; justify-content: space-between; align-items: center;
-        margin-bottom: 10px; gap: 12px;
+      .end-actions button:hover { filter: brightness(1.12); }
+
+      /* -- minimap ------------------------------------------------------------ */
+      #minimap-frame {
+        position: fixed; left: 12px; bottom: 12px; padding: 6px;
+        border-radius: 14px;
       }
-      .lobby-card select, .lobby-card input {
-        background: #232b1c; color: #cfe0c3; border: 1px solid #39442e;
-        border-radius: 4px; padding: 5px 8px; font: inherit; width: 130px;
-      }
-      .lobby-card .note { opacity: .55; font-size: 11px; margin: 12px 0 16px; }
-      .lobby-actions { display: flex; gap: 8px; justify-content: flex-end; }
-      .lobby-actions button {
-        background: #33421f; color: #e6f0de; border: 1px solid #5c7049;
-        border-radius: 4px; padding: 7px 16px; font: inherit; cursor: pointer;
-      }
-      .lobby-actions button.ghost { background: #232b1c; border-color: #39442e; }
-      .lobby-actions button:hover { filter: brightness(1.2); }
       #minimap {
-        position: fixed; bottom: 0; left: 0;
-        width: 200px; height: 200px;
-        background: rgba(10, 14, 8, 0.86);
-        border-top-right-radius: 6px;
+        width: 188px; height: 188px;
+        border-radius: 10px;
         cursor: crosshair;
         display: block;
       }
-      #panel {
-        position: fixed; top: 0; right: 0; width: 210px; max-height: 100vh;
-        overflow-y: auto;
-        background: rgba(10, 14, 8, 0.86);
-        border-bottom-left-radius: 6px;
-        padding: 10px;
+      #minimap-frame .tag {
+        position: absolute; bottom: 12px; left: 16px;
+        font-size: 8px; letter-spacing: 2px; color: rgba(255, 255, 255, 0.4);
+        pointer-events: none;
       }
-      #panel-title { opacity: 0.6; letter-spacing: 1px; margin-bottom: 8px; }
+
+      /* -- build / production panel ------------------------------------------ */
+      #panel {
+        position: fixed; top: 62px; right: 12px; width: 262px;
+        max-height: calc(100vh - 74px);
+        overflow-y: auto;
+        padding: 12px;
+        border-radius: 16px;
+      }
+      #panel-title {
+        font-size: 10px; letter-spacing: 3px; color: #8b959e;
+        margin: 2px 2px 10px;
+      }
       .item {
-        display: block; width: 100%; text-align: left;
-        background: #232b1c; color: #cfe0c3;
-        border: 1px solid #39442e; border-radius: 4px;
-        padding: 6px 8px; margin-bottom: 5px;
+        display: flex; gap: 10px; align-items: center; width: 100%;
+        text-align: left;
+        background: rgba(255, 255, 255, 0.04); color: #e8e8e2;
+        border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 10px;
+        padding: 8px; margin-bottom: 6px;
         font: inherit; cursor: pointer;
       }
-      .item:hover:not(:disabled) { background: #2e3a25; border-color: #5c7049; }
-      .item:disabled { opacity: 0.38; cursor: default; }
-      .item .cost { float: right; opacity: 0.75; }
-      .item .why { display: block; font-size: 11px; opacity: 0.6; margin-top: 2px; }
-      .item.active { border-color: #9fe870; background: #33421f; }
-      #hint {
-        /* Offset past the minimap: the two overlapped and the hints were
-           unreadable behind it. */
-        position: fixed; bottom: 0; left: 200px; padding: 8px 12px;
-        background: rgba(10, 14, 8, 0.72);
-        border-top-right-radius: 6px;
-        pointer-events: none;
-        opacity: 0.75;
+      .item:hover:not(:disabled) { background: rgba(126, 231, 135, 0.08); border-color: rgba(126, 231, 135, 0.25); }
+      .item:disabled { opacity: 0.45; cursor: default; }
+      .item:disabled .why { color: #e8877f; opacity: 1; }
+      .item.active { border-color: #7ee787; background: rgba(126, 231, 135, 0.12); }
+      .item .icon {
+        width: 36px; height: 36px; border-radius: 8px; flex: none;
+        background-color: rgba(126, 231, 135, 0.1);
+        background-image: url("/sprites.png");
+        background-repeat: no-repeat;
       }
+      .item .icon.missing { background-image: none; }
+      .item .body { min-width: 0; }
+      .item .name { font-size: 12px; font-weight: 600; }
+      .item .why { display: block; font-size: 9.5px; color: #8b959e; line-height: 1.3; margin-top: 1px; }
+      .item .cost { margin-left: auto; font-size: 12px; font-weight: 700; color: #ffd76e; flex: none; }
+      .item.plain { cursor: default; }
+
+      /* -- hint chips, bottom centre ------------------------------------------ */
+      #hint {
+        position: fixed; bottom: 12px; left: 50%; transform: translateX(-50%);
+        display: flex; gap: 6px; flex-wrap: wrap; justify-content: center;
+        max-width: calc(100vw - 480px);
+        padding: 6px 10px;
+        font-size: 10px; color: #aeb8c0;
+        pointer-events: none;
+        border-radius: 12px;
+      }
+      #hint b {
+        color: #e8e8e2; background: rgba(255, 255, 255, 0.1);
+        border-radius: 5px; padding: 1px 6px; font-size: 9.5px; font-weight: 600;
+      }
+      #hint span { display: inline-flex; gap: 5px; align-items: center; white-space: nowrap; }
+      #hint:empty { display: none; }
     </style>
   </head>
   <body>
-    <div id="hud">connecting…</div>
-    <div id="hint">drag: select · shift+click: add/remove · double-click: all of type (ctrl: map-wide) · Ctrl+A: all units · E: all combat units · right-click: move/attack · shift: queue order · S: stop · A then click: attack-move · Ctrl+1-9 set group, 1-9 recall · building + right-click: rally · WASD/edge: pan · wheel: zoom · M: mute</div>
+    <div id="hud">
+      <span class="chip" id="hud-conn"><span class="dot">●</span> connecting…</span>
+      <span class="chip"><span class="coin">$</span><span id="hud-credits">0</span></span>
+      <span class="chip" id="hud-power-chip"><span class="bolt">⚡</span> <span id="hud-power">0</span> <small>POWER</small></span>
+      <span class="chip">units <span id="hud-units">0</span> · selected <span id="hud-selected">0</span></span>
+      <span class="chip mode" id="hud-mode"></span>
+      <span class="chip summary" id="hud-summary" hidden></span>
+    </div>
+    <div id="hint" class="glass"><span><b>drag</b> select</span><span><b>right-click</b> move/attack</span><span><b>shift</b> queue order</span><span><b>S</b> stop</span><span><b>A</b> attack-move</span><span><b>Ctrl+1-9</b> set group, <b>1-9</b> recall</span><span><b>Ctrl+A</b> all units</span><span><b>E</b> combat units</span><span><b>dbl-click</b> all of type</span><span><b>building + right-click</b> rally</span><span><b>WASD/edge</b> pan</span><span><b>wheel</b> zoom</span><span><b>M</b> mute</span></div>
     <button id="lobby-open" title="Start a new match">NEW MATCH</button>
     <div id="lobby" hidden>
       <div class="lobby-card">
-        <h2>New Match</h2>
+        <h2>NEW MATCH</h2>
         <label>Players <select id="lobby-players"></select></label>
         <label>Bots <select id="lobby-bots"></select></label>
         <label>Difficulty
@@ -141,7 +241,10 @@
         </div>
       </div>
     </div>
-    <canvas id="minimap" width="200" height="200"></canvas>
+    <div id="minimap-frame" class="glass">
+      <canvas id="minimap" width="188" height="188"></canvas>
+      <span class="tag">FOG OF WAR</span>
+    </div>
     <div id="endscreen" hidden>
       <div class="end-card">
         <div id="end-title">VICTORY</div>
@@ -152,7 +255,7 @@
         </div>
       </div>
     </div>
-    <div id="panel">
+    <div id="panel" class="glass">
       <div id="panel-title">BUILD</div>
       <div id="panel-items"></div>
     </div>
@@ -161,8 +264,8 @@
       // is. Surface anything that escapes -- including a rejected top-level
       // await in main.ts, which otherwise leaves the page looking merely slow.
       function showFatal(what, detail) {
-        var hud = document.getElementById("hud");
-        if (hud) hud.textContent = what + "\n" + detail;
+        var conn = document.getElementById("hud-conn");
+        if (conn) conn.textContent = what + " — " + detail;
       }
       addEventListener("error", function (e) {
         showFatal("script error", e.message || String(e.error));
