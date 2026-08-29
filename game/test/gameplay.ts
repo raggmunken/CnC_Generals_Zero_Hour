@@ -11,6 +11,7 @@ import { generateMap, generateSupplyNodes } from "../server/mapgen.js";
 import { Sim, TICK_RATE } from "../server/sim.js";
 import { BUILDINGS, UNITS, buildingDef, unitDef } from "../shared/content.js";
 import { Terrain, type Unit } from "../shared/types.js";
+import { existsSync, readFileSync } from "node:fs";
 
 let pass = 0;
 const failed: string[] = [];
@@ -325,18 +326,23 @@ section("Computer opponent");
   ok("AI attacks and can win unopposed", sim.eliminated.has(1), sim.eliminated.has(1) ? "opponent destroyed" : "opponent survived");
 }
 
-// -- presentation ----------------------------------------------------------
-section("Presentation");
-// Client-side and synthesised in the browser, so this headless audit cannot
-// exercise it: e2e asserts every sample renders unclipped and audible. Listed
-// here so the count reflects that the game has sound, not silence.
-ok("sound", true, "weapons, explosions, build, harvest, UI clicks, mute toggle -- verified in e2e");
-
 // -- known gaps ------------------------------------------------------------
 section("Not implemented");
 gap("aircraft", "the air armour class, flak weapons and AA battery exist, but no unit flies yet");
 gap("save/load and replays", "no persistence of any kind");
 gap("unit veterancy and stealth", "deliberately out of scope for now");
+
+// Sound is client-side, so the sim cannot exercise it -- what can be audited
+// here is that the pack the client ships actually contains every sample the
+// engine names. The e2e suite checks the client really decodes them.
+section("Sound");
+{
+  const dataPath = new URL("../client/src/audio-data.ts", import.meta.url);
+  const src = existsSync(dataPath) ? readFileSync(dataPath, "utf8") : "";
+  const names = ["rifle", "cannon", "rocket", "explosion", "bigexplosion", "build", "harvest", "click"];
+  const found = names.filter((n) => src.includes(`"${n}"`));
+  ok("sound pack is embedded", found.length === names.length, `${found.length}/${names.length} samples`);
+}
 
 console.log(
   `\n${pass} working, ${failed.length} broken, ${missing.length} not implemented` +

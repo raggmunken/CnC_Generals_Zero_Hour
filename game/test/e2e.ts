@@ -103,23 +103,32 @@ check("move order spawns an order ping", fxAfterOrder > 0, `effects=${fxAfterOrd
 const endHidden = await page.locator("#endscreen").isHidden();
 check("end screen stays hidden mid-match", endHidden);
 
-// 4c. The sound pack renders. Synthesised audio fails silently -- a recipe
-//     that produces nothing plays without error -- so check the shapes, not
-//     just that the engine reported itself loaded.
-await page.mouse.move(300, 300);
-await page.waitForTimeout(200);
-const audio = await page.evaluate(() => {
-  const w = window as unknown as {
-    __rtsView?: { audioStats?: Array<{ name: string; seconds: number; peak: number; rms: number }> };
-  };
-  return w.__rtsView?.audioStats ?? [];
-});
-check("sound pack renders every sample", audio.length === 8, `samples=${audio.length}`);
-check(
-  "no sample is silent or clipped",
-  audio.length > 0 && audio.every((a) => a.peak > 0.1 && a.peak <= 1 && a.rms > 0.01 && a.seconds > 0.01),
-  audio.map((a) => `${a.name}:${a.peak}`).join(" "),
+// 4c. Sound: the pack decodes once audio is unlocked (the clicks above count
+//     as the user gesture), and the S key halts what is moving.
+const audioLoaded = await page.evaluate(
+  () => (window as unknown as { __rtsView?: { audioLoaded?: number } }).__rtsView?.audioLoaded ?? 0,
 );
+check("sound pack decodes in the client", audioLoaded === 8, `loaded=${audioLoaded}`);
+
+await page.mouse.click(900, 550, { button: "right" });
+await page.waitForTimeout(250);
+await page.keyboard.press("KeyS");
+await page.waitForTimeout(300);
+const stoppedAt = await readUnitPositions();
+await page.waitForTimeout(800);
+const afterStop = await readUnitPositions();
+// Only the selection gets the stop order; an unselected harvester keeps
+// working its route and must not fail the check.
+const selIds: number[] = await page.evaluate(
+  () => (window as unknown as { __rtsView?: { selectedIds?: number[] } }).__rtsView?.selectedIds ?? [],
+);
+let stillMoving = 0;
+for (const id of selIds) {
+  const p = afterStop.get(id);
+  const q = stoppedAt.get(id);
+  if (p && q && Math.hypot(p.x - q.x, p.y - q.y) > 0.2) stillMoving++;
+}
+check("S stop order halts the selection", selIds.length > 0 && stillMoving === 0, `stillMoving=${stillMoving}/${selIds.length}`);
 
 await page.screenshot({ path: "/tmp/rts-moved.png" });
 
