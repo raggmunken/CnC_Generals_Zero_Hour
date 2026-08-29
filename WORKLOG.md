@@ -286,7 +286,8 @@ Claude: MEASURED — the keying is harder than "delete the two checker greys".
 Findings, so nobody redoes this search:
   - The checkerboard is NOT on a global parity grid. I fitted period and offset
     against pixels I was certain were background; best agreement was 0.39,
-    i.e. no better than chance. The sheet was upscaled non-uniformly. Any
+    i.e. no better than chance. The sheet was upscaled from a smaller original,
+    and after a resample any
     approach that computes an expected tone from (x, y) is dead.
   - Matching the two exact tones (185 and 127) is not enough either. The upscale
     left soft 2px transitions on every checker boundary, and those intermediate
@@ -381,3 +382,59 @@ Claude: ISSUE FOUND AND FIXED — the first version of the range test read its
 numbers off `window.__rts`, which the snapshot handler replaces wholesale 15
 times a second, so anything the frame loop wrote there was raced away and read
 back as zero. Per-frame view state now lives on its own `__rtsView` hook.
+
+Kimi: PRESENTATION AND FEEL PASS. The game played correctly and looked like
+a proof of concept, so this round was all client-side: nothing in the sim or
+the protocol changed, and every effect below is derived from data the client
+already had.
+
+Terrain stopped reading as a grid. The bake now does three deterministic
+passes after compositing tiles: quarter-tile brightness jitter (per-tile
+jitter correlated with the grid and read as checkerboard — the first version
+did exactly that, and the fix was finer grain at lower amplitude), seam
+gradients that bleed each neighbour's colour across shared edges, and a
+shoreline treatment wherever water meets land — sand band on the land side,
+shallow tint on the water side. That last one is the strongest single cue
+that a river is a river and not a blue corridor.
+
+Fog is a bitmap now, not nine thousand rectangles. One pixel per tile into a
+canvas, upscaled with bilinear filtering: the feathered edge of vision falls
+out of the upscale for free, where the rectangle pass stepped hard at every
+tile boundary and cost more than the rest of the frame.
+
+Everything casts a shadow. Units and buildings without shadows float over the
+terrain; offset down-right so the light matches the art's up-left shading.
+Buildings get a wide soft ellipse, units a tighter one.
+
+Combat reads now. Shots flash at the muzzle and spark at the impact — the
+tracer line alone read as a ruler. Deaths are detected, not sent: something
+that vanishes from a tile you can see blew up, and fog is what makes that
+sound — an enemy that walks out of sight disappears identically to one that
+died, so explosions only spawn where the tile is currently visible (or for
+your own units, which you always see). Buildings get the bigger boom.
+
+Orders land somewhere. Move clicks drop a green ring that closes inward on
+the point, attacks and attack-moves a red one with a cross. An order with no
+visible consequence reads as an order that did not take.
+
+The match ends on screen, not in the HUD. The server reports who is
+eliminated; whether that means victory or defeat depends on teams, which only
+the welcome message knows. Defeat shows the moment you are out; victory when
+no opposing team has anything left, with a guard against "winning" a match
+that has no opponents yet. Buttons for New Match and Keep Watching — a
+defeated player in a friends game wants to spectate.
+
+Input idioms filled in: hovering an enemy with an armed selection shows the
+crosshair cursor; double-tapping a control-group number centres the camera on
+the group; the HUD lists what you have selected ("Rifle Infantry x2, Dozer")
+instead of a bare count.
+
+Also fixed the test harness portability bug: e2e and the screenshot tool
+hardcoded /opt/pw-browsers/chromium-1194/chrome-linux/chrome, and both the
+revision directory and the chrome-linux vs chrome-linux64 subdirectory change
+with Playwright releases. test/browser.ts now honours PW_CHROMIUM and scans
+the cache roots for whatever is actually installed.
+
+Verified: build clean, sim ALL PASS, audit still 37/0/4, e2e ALL PASS
+including two new checks (order ping spawns, end screen stays hidden
+mid-match). Screenshots compared against the pre-change captures.
