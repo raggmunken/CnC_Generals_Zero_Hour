@@ -22,9 +22,8 @@ SEED=7 npm run server
 Everything except the port can also be changed in-game via **NEW MATCH**, which
 restarts the match for everyone connected.
 
-Open <http://localhost:8090>. **Open a second tab to join as another player** --
-there is no AI opponent yet, so a second tab is currently the only way to have
-an enemy.
+Open <http://localhost:8090>. **Add a bot from NEW MATCH, or open a second tab
+to join as another player.**
 
 `npm test` runs the end-to-end check: it drives the real client in a real
 browser against the real server and asserts that a click actually moves a unit
@@ -154,12 +153,21 @@ game stays playable while the art is being replaced.
 
 ## Status
 
-Phases A and B complete and verified: simulation, transport, rendering,
-selection, movement, construction, production queues, power, the tech tree and
-a working harvester economy.
+Phases A through E are in: simulation, transport, rendering, selection,
+movement, construction, production queues, power, the tech tree, a working
+harvester economy, combat with counters and splash, A* pathfinding, fog of
+war, an AI opponent with a self-play harness, and an in-game lobby with
+restartable matches.
 
-`npm test` runs both suites -- headless simulation tests for the economy and
-tech tree, then the browser end-to-end check.
+Presentation and feel: the terrain bake softens biome seams and draws
+shorelines where water meets land; fog feathers at the edge of vision instead
+of stepping tile by tile; units and buildings cast shadows; shots flash at the
+muzzle and spark at the impact; anything destroyed in sight explodes; orders
+ping where they land; the match ends in a victory/defeat screen rather than a
+line of HUD text.
 
-Next: combat and fog of war (C), AI opponent plus self-play harness (D), lobby
-and teams (E).
+`npm test` runs all three suites -- headless simulation tests, the gameplay
+audit, then the browser end-to-end check.
+
+Next: sound (nothing is audible yet), aircraft (the armour class, flak weapons
+and AA battery exist, but no unit flies), save/load and replays.

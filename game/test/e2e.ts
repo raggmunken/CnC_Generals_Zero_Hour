@@ -6,6 +6,7 @@
  * works; this proves the sim, the transport, the renderer and input all line up.
  */
 import { chromium } from "playwright";
+import { findChromium } from "./browser.js";
 
 const URL = process.env.GAME_URL ?? "http://127.0.0.1:8090/";
 const failures: string[] = [];
@@ -16,7 +17,7 @@ function check(label: string, ok: boolean, detail = ""): void {
 }
 
 const browser = await chromium.launch({
-  executablePath: "/opt/pw-browsers/chromium-1194/chrome-linux/chrome",
+  executablePath: findChromium(),
   args: ["--no-sandbox", "--use-gl=swiftshader", "--enable-unsafe-swiftshader"],
 });
 const page = await browser.newPage({ viewport: { width: 1280, height: 720 } });
@@ -79,6 +80,13 @@ check(
 //    testing the server's state, not the client's optimism.
 const before = await readUnitPositions();
 await page.mouse.click(640, 400, { button: "right" });
+// The order ping lives 420ms; read it before the movement wait below eats it.
+// The view hook updates on the next animation frame, hence the short settle.
+await page.waitForTimeout(100);
+const fxAfterOrder = await page.evaluate(() => {
+  const w = window as unknown as { __rtsView?: { effects?: number } };
+  return w.__rtsView?.effects ?? 0;
+});
 await page.waitForTimeout(1800);
 const after = await readUnitPositions();
 
@@ -88,6 +96,12 @@ for (const [id, p] of after) {
   if (q && Math.hypot(p.x - q.x, p.y - q.y) > 0.5) moved++;
 }
 check("units moved on the server after a move order", moved > 0, `moved=${moved}/${after.size}`);
+
+// 4b. The order produced visible feedback: a ping effect was queued where the
+//     click landed, and the end-of-match overlay stayed out of the way.
+check("move order spawns an order ping", fxAfterOrder > 0, `effects=${fxAfterOrder}`);
+const endHidden = await page.locator("#endscreen").isHidden();
+check("end screen stays hidden mid-match", endHidden);
 
 await page.screenshot({ path: "/tmp/rts-moved.png" });
 

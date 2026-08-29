@@ -36,7 +36,27 @@
         background: rgba(6, 9, 5, 0.72);
         display: flex; align-items: center; justify-content: center;
       }
-      #lobby[hidden] { display: none; }
+      #lobby[hidden], #endscreen[hidden] { display: none; }
+      #endscreen {
+        position: fixed; inset: 0; z-index: 9;
+        background: rgba(6, 9, 5, 0.55);
+        display: flex; align-items: center; justify-content: center;
+        pointer-events: none;
+      }
+      .end-card { text-align: center; }
+      #end-title {
+        font-size: 54px; letter-spacing: 14px; font-weight: 700;
+        text-shadow: 0 2px 18px rgba(0,0,0,0.9);
+      }
+      #end-detail { opacity: 0.8; margin: 10px 0 20px; }
+      .end-actions { display: flex; gap: 10px; justify-content: center; }
+      .end-actions button {
+        pointer-events: auto;
+        background: #33421f; color: #e6f0de; border: 1px solid #5c7049;
+        border-radius: 4px; padding: 8px 18px; font: inherit; cursor: pointer;
+      }
+      .end-actions button.ghost { background: #232b1c; border-color: #39442e; }
+      .end-actions button:hover { filter: brightness(1.2); }
       .lobby-card {
         background: #1a2016; border: 1px solid #3c4a33; border-radius: 8px;
         padding: 22px 24px; width: 320px;
@@ -122,6 +142,16 @@
       </div>
     </div>
     <canvas id="minimap" width="200" height="200"></canvas>
+    <div id="endscreen" hidden>
+      <div class="end-card">
+        <div id="end-title">VICTORY</div>
+        <div id="end-detail"></div>
+        <div class="end-actions">
+          <button id="end-again">New match</button>
+          <button id="end-watch" class="ghost">Keep watching</button>
+        </div>
+      </div>
+    </div>
     <div id="panel">
       <div id="panel-title">BUILD</div>
       <div id="panel-items"></div>
