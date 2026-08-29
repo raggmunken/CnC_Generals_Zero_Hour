@@ -481,7 +481,7 @@ export class Renderer {
   drawUnits(
     units: Array<{
       id: number; owner: number; type: string;
-      x: number; y: number; radius: number; hpFrac: number;
+      x: number; y: number; radius: number; hpFrac: number; air?: boolean;
     }>,
     selected: ReadonlySet<number>,
   ): void {
@@ -495,10 +495,15 @@ export class Renderer {
       live.add(u.id);
       const color = PLAYER_COLOR[u.owner % PLAYER_COLOR.length]!;
 
+      // Aircraft hover above their tile: the shadow and the selection ring
+      // stay on the ground (they mark the tile), the body rides above them.
+      const airLift = u.air ? 0.6 : 0;
+
       // A unit without a shadow reads as floating; offset down-right so the
-      // light appears to come from up-left, matching the art's shading.
-      this.shadowLayer.ellipse(u.x + 0.14, u.y + u.radius * 0.55, u.radius * 0.95, u.radius * 0.42)
-        .fill({ color: 0x000000, alpha: 0.26 });
+      // light appears to come from up-left, matching the art's shading. An
+      // aircraft's shadow is smaller and fainter: it is farther away.
+      this.shadowLayer.ellipse(u.x + 0.14, u.y + u.radius * 0.55, u.radius * (u.air ? 0.7 : 0.95), u.radius * 0.42)
+        .fill({ color: 0x000000, alpha: u.air ? 0.16 : 0.26 });
 
       if (selected.has(u.id) && ring) {
         // The drawn ring, not a filled disc: at this sprite size a disc large
@@ -516,7 +521,7 @@ export class Renderer {
       const tex = this.atlas.get(`unit.${u.type}`);
       if (tex) {
         const sp = this.sprite(this.unitSprites, this.unitContainer, u.id, tex);
-        sp.position.set(u.x, u.y);
+        sp.position.set(u.x, u.y - airLift);
         // Sprites are drawn neutral grey, so tinting gives every faction from
         // one sheet rather than one sheet per player colour.
         sp.tint = color;
@@ -527,10 +532,10 @@ export class Renderer {
         sp.scale.set(draw / tex.frame.width);
         sp.rotation = this.headingOf(u.id, u.x, u.y);
       } else {
-        g.circle(u.x, u.y, u.radius).fill(color);
+        g.circle(u.x, u.y - airLift, u.radius).fill(color);
       }
 
-      this.healthBar(g, u.x, u.y - u.radius - 0.3, u.radius * 2.2, u.hpFrac);
+      this.healthBar(g, u.x, u.y - airLift - u.radius - 0.3, u.radius * 2.2, u.hpFrac);
     }
     this.reap(this.unitSprites, live);
     this.reap(this.selectSprites, picked);
