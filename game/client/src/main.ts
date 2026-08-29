@@ -17,7 +17,14 @@ const EDGE_SCROLL_PX = 24;
 /** How far past the map edge the camera may scroll, in world units. */
 const EDGE_MARGIN = 2;
 
-const hud = document.getElementById("hud")!;
+const hudConn = document.getElementById("hud-conn")!;
+const hudCredits = document.getElementById("hud-credits")!;
+const hudPower = document.getElementById("hud-power")!;
+const hudPowerChip = document.getElementById("hud-power-chip")!;
+const hudUnits = document.getElementById("hud-units")!;
+const hudSelected = document.getElementById("hud-selected")!;
+const hudMode = document.getElementById("hud-mode")!;
+const hudSummary = document.getElementById("hud-summary")!;
 const panelItems = document.getElementById("panel-items")!;
 const minimap = document.getElementById("minimap") as HTMLCanvasElement;
 const lobby = document.getElementById("lobby")!;
@@ -31,18 +38,25 @@ const endTitle = document.getElementById("end-title")!;
 const endDetail = document.getElementById("end-detail")!;
 const panelTitle = document.getElementById("panel-title")!;
 const hintEl = document.getElementById("hint")!;
-const HINT_TEXT = hintEl.textContent ?? "";
+const HINT_HTML = hintEl.innerHTML;
 let hintTimer = 0;
 /** Briefly replace the hint bar with feedback, then restore it. */
 function flashHint(text: string): void {
   hintEl.textContent = text;
   window.clearTimeout(hintTimer);
-  hintTimer = window.setTimeout(() => (hintEl.textContent = HINT_TEXT), 1200);
+  hintTimer = window.setTimeout(() => (hintEl.innerHTML = HINT_HTML), 1200);
 }
 const renderer = new Renderer();
 await renderer.init();
 // Optional: the game plays with primitive shapes if the sheet is absent.
 await renderer.loadAtlas();
+
+// Panel icons come from the same sheet the renderer draws with, so a building
+// in the build list looks like the building on the map. State only here; the
+// load runs at the bottom of the module, after renderPanel exists.
+let iconCells: Record<string, { x: number; y: number; w: number; h: number }> | null = null;
+let iconSheetW = 0;
+let iconSheetH = 0;
 
 const net = new Net();
 const audio = new AudioEngine();
@@ -752,8 +766,7 @@ function renderPanel(): void {
 
     if (def.produces.length === 0) {
       const p = document.createElement("div");
-      p.className = "item";
-      p.style.cursor = "default";
+      p.className = "item plain";
       p.textContent = def.description;
       panelItems.append(p);
     }
@@ -764,14 +777,13 @@ function renderPanel(): void {
       panelItems.append(
         makeItem(u.name, u.cost, afford ? u.role : "not enough credits", !afford, false, () => {
           net.send({ t: "train", buildingId: sel.id, unitType: unitId });
-        }),
+        }, `unit.${unitId}`),
       );
     }
 
     if (sel.queue.length > 0) {
       const q = document.createElement("div");
-      q.className = "item";
-      q.style.cursor = "default";
+      q.className = "item plain";
       const head = sel.queue[0]!;
       const pct = Math.round((1 - head.remaining / head.total) * 100);
       q.textContent = `${UNITS[head.unitType]?.name ?? head.unitType} ${pct}%` +
@@ -800,7 +812,7 @@ function renderPanel(): void {
       makeItem(def.name, def.cost, why, disabled, placing === id, () => {
         placing = placing === id ? null : id;
         renderPanel();
-      }),
+      }, `building.${id}`),
     );
   }
 }
@@ -838,18 +850,25 @@ function makeItem(
   disabled: boolean,
   active: boolean,
   onClick: () => void,
+  iconKey?: string,
 ): HTMLButtonElement {
   const el = document.createElement("button");
   el.className = "item" + (active ? " active" : "");
   el.disabled = disabled;
-  const cs = document.createElement("span");
-  cs.className = "cost";
-  cs.textContent = `$${cost}`;
-  el.append(name, cs);
+  el.append(makeIcon(iconKey));
+  const body = document.createElement("span");
+  body.className = "body";
+  const nm = document.createElement("span");
+  nm.className = "name";
+  nm.textContent = name;
   const w = document.createElement("span");
   w.className = "why";
   w.textContent = why;
-  el.append(w);
+  body.append(nm, w);
+  const cs = document.createElement("span");
+  cs.className = "cost";
+  cs.textContent = `$${cost}`;
+  el.append(body, cs);
   el.addEventListener("click", () => {
     audio.play("click", 0.6);
     onClick();
@@ -857,9 +876,31 @@ function makeItem(
   return el;
 }
 
+/**
+ * A cell of the sprite sheet scaled into a 36px chip. Icons are the same art
+ * the map draws, so the panel teaches the sprites rather than a parallel
+ * iconography the player has to relearn.
+ */
+function makeIcon(key: string | undefined): HTMLElement {
+  const i = document.createElement("i");
+  i.className = "icon";
+  const cell = key && iconCells ? iconCells[key] : undefined;
+  if (!cell || !iconSheetW) {
+    i.classList.add("missing");
+    return i;
+  }
+  const target = 36;
+  const s = target / Math.max(cell.w, cell.h);
+  const ox = (target - cell.w * s) / 2 - cell.x * s;
+  const oy = (target - cell.h * s) / 2 - cell.y * s;
+  i.style.backgroundSize = `${iconSheetW * s}px ${iconSheetH * s}px`;
+  i.style.backgroundPosition = `${ox}px ${oy}px`;
+  return i;
+}
+
 function makeBack(): HTMLButtonElement {
   const el = document.createElement("button");
-  el.className = "item";
+  el.className = "item plain";
   el.textContent = "\u2190 back";
   el.addEventListener("click", () => { selectedBuilding = null; renderPanel(); });
   return el;
@@ -1008,7 +1049,6 @@ renderer.app.ticker.add(() => {
     effects: renderer.effectCount,
     endState,
     audioLoaded: audio.loadedCount,
-    audioStats: audio.debugStats(),
   };
 
   // Age out tracers, then draw what is left with a linear fade.
@@ -1054,13 +1094,16 @@ renderer.app.ticker.add(() => {
   }
 
   const lowPower = economy.powerConsumed > economy.powerProduced;
-  hud.textContent =
-    `${status}  ·  player ${playerId < 0 ? "?" : playerId + 1}  ·  ` +
-    `$${economy.credits}  ·  power ${economy.powerProduced - economy.powerConsumed}` +
-    `${lowPower ? " LOW" : ""}  ·  units ${currUnits.size}  ·  selected ${selected.size}` +
-    `${attackMoveArmed ? "  ·  ATTACK-MOVE" : ""}` +
-    `${endState === "defeat" ? "  ·  DEFEATED" : ""}` +
-    (selSummary ? `\n${selSummary}` : "");
+  hudConn.textContent = `${status} · player ${playerId < 0 ? "?" : playerId + 1}`;
+  hudConn.prepend(Object.assign(document.createElement("span"), { className: "dot", textContent: "●" }));
+  hudCredits.textContent = String(economy.credits);
+  hudPower.textContent = String(economy.powerProduced - economy.powerConsumed) + (lowPower ? " LOW" : "");
+  hudPowerChip.classList.toggle("warn", lowPower);
+  hudUnits.textContent = String(currUnits.size);
+  hudSelected.textContent = String(selected.size);
+  hudMode.textContent = endState === "defeat" ? "DEFEATED" : attackMoveArmed ? "ATTACK-MOVE" : "";
+  hudSummary.textContent = selSummary;
+  hudSummary.hidden = selSummary === "";
 });
 
 function updateCamera(dt: number): void {
@@ -1109,3 +1152,22 @@ function clampCamera(): void {
       ? (mapH - viewH) / 2
       : Math.max(-EDGE_MARGIN, Math.min(mapH - viewH + EDGE_MARGIN, renderer.camY));
 }
+
+// Load the icon atlas last of all: the callback needs renderPanel and panelSig
+// fully initialised, and with top-level awaits in this module a fast fetch can
+// otherwise fire while later declarations are still in their dead zone.
+fetch("/atlas.json")
+  .then((r) => (r.ok ? r.json() : null))
+  .then((m) => {
+    if (!m?.sprites) return;
+    iconCells = m.sprites;
+    // The sheet is a dense grid, so its extent is the largest cell corner --
+    // no Image load needed, and no second async step to race the first panel.
+    for (const c of Object.values(m.sprites) as Array<{ x: number; y: number; w: number; h: number }>) {
+      iconSheetW = Math.max(iconSheetW, c.x + c.w);
+      iconSheetH = Math.max(iconSheetH, c.y + c.h);
+    }
+    panelSig = ""; // force one rebuild so icons appear
+    renderPanel();
+  })
+  .catch(() => {});
