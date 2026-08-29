@@ -86,7 +86,8 @@ export interface WeaponDef {
 export type Order =
   | { kind: "move"; x: number; y: number }
   | { kind: "attackMove"; x: number; y: number }
-  | { kind: "attack"; targetId: number; targetKind: "unit" | "building" };
+  | { kind: "attack"; targetId: number; targetKind: "unit" | "building" }
+  | { kind: "stop" };
 
 export interface UnitTypeDef {
   id: string;
@@ -166,6 +167,8 @@ export interface Tracer {
   y0: number;
   x1: number;
   y1: number;
+  /** What fired it; the client uses this to pick a firing sound. */
+  weapon: DamageType;
 }
 
 /** Per-player economy, sent to its owner each snapshot. */
@@ -196,6 +199,11 @@ export interface Unit {
   nodeId?: number;
   /** Current intent. Absent means idle. */
   order?: Order;
+  /**
+   * Shift-queued orders, run in sequence after the current one completes.
+   * Capped short -- an unbounded queue is an exploit, not a feature.
+   */
+  queue?: Order[];
   /** Ticks until this unit may fire again. */
   cooldown?: number;
   /** Remaining waypoints from the pathfinder. */

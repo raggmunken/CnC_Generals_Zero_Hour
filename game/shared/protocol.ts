@@ -68,6 +68,8 @@ export interface OrderCmd {
   t: "order";
   unitIds: number[];
   order: Order;
+  /** Shift-queue: run after the unit's current order instead of replacing it. */
+  append?: boolean;
 }
 
 /** Client -> server: set a building's rally point. */
