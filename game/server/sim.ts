@@ -190,7 +190,6 @@ export class Sim {
     }
     u.pathGoalX = x;
     u.pathGoalY = y;
-    u.stuckFor = 0;
   }
 
   private clearPath(u: Unit): void {
@@ -1140,10 +1139,23 @@ export class Sim {
     const beforeY = u.y;
 
     // If the unit is already inside an obstacle -- a building finished on top
-    // of it, or a bad spawn -- let it move regardless, or it is stuck forever.
+    // of it, or a bad spawn -- teleport it to the nearest open tile so it
+    // escapes immediately. The old approach of letting it move freely inside
+    // the blocked area failed because separateUnits() pushes it back each
+    // tick, causing a permanent oscillation with no stuck detection.
     if (this.isBlockedFor(u.x, u.y, r)) {
-      u.x = nx;
-      u.y = ny;
+      if (this.blockedDirty) this.rebuildBlocked();
+      const grid = this.gridFor(r);
+      const escape = nearestOpen(grid, this.map.width, this.map.height,
+        Math.floor(u.x), Math.floor(u.y), 10);
+      if (escape) {
+        u.x = escape.x + 0.5;
+        u.y = escape.y + 0.5;
+      } else {
+        // No open tile nearby: at least let it move so it doesn't freeze.
+        u.x = nx;
+        u.y = ny;
+      }
       return;
     }
 
@@ -1177,10 +1189,18 @@ export class Sim {
           if (this.blockedDirty) this.rebuildBlocked();
           const grid = this.gridFor(r);
           const escape = nearestOpen(grid, this.map.width, this.map.height,
-            Math.floor(u.x), Math.floor(u.y), 10);
+            Math.floor(u.x), Math.floor(u.y), 15);
           if (escape) {
             u.x = escape.x + 0.5;
             u.y = escape.y + 0.5;
+          }
+          // If this is a harvester, clear its assignments so it re-evaluates
+          // which supply center to return to. The assigned drop-off may be
+          // unreachable (walled in by new buildings), so trying a different
+          // one is the only way to break out of a stuck loop.
+          if (u.type === "harvester") {
+            u.dropOffId = undefined;
+            u.nodeId = undefined;
           }
           u.stuckCount = 0;
         }

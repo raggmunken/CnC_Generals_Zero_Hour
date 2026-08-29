@@ -164,7 +164,7 @@ export const UNITS: Record<string, UnitTypeDef> = {
   },
   harvester: {
     id: "harvester", name: "Harvester", cost: 700, buildTime: 10,
-    speed: 4.0, maxHp: 400, radius: 0.55, producedBy: "supply_center",
+    speed: 4.0, maxHp: 400, radius: 0.5, producedBy: "supply_center",
     role: "Gathers supplies. Unarmed.",
     armour: "light", vision: 6,
   },
@@ -215,7 +215,7 @@ export const UNITS: Record<string, UnitTypeDef> = {
     // Rockets keep it honest against armour and other aircraft; the matrix
     // makes cannons and artillery pointless against it, which is the point of
     // air: it forces the opponent to build flak.
-    weapon: { damage: 38, damageType: "rocket", range: 8, reload: 1.5 },
+    weapon: { damage: 38, damageType: "rocket", range: 11, reload: 1.5 },
   },
 };
 

@@ -241,7 +241,13 @@ export class AIPlayer {
     this.model.decay(dt);
     this.model.observe(this.sim, this.playerId);
 
-    this.buildBase();
+    // If the army has been wiped, prioritise rebuilding it over expanding
+    // the base. buildBase() spends income on structures, which starves
+    // trainUnits() of the money needed to replace lost combat units.
+    const combatCount = this.myUnits().filter((u) => unitDef(u.type).weapon !== undefined).length;
+    if (combatCount > 0 || this.attackWaves === 0) {
+      this.buildBase();
+    }
     this.trainUnits();
     this.commandArmy();
   }
@@ -292,16 +298,40 @@ export class AIPlayer {
    */
   private findPlot(size: number): { x: number; y: number } | null {
     const home = this.homePosition();
-    for (let r = 4; r < 22; r += 2) {
+    for (let r = 5; r < 24; r += 3) {
       for (let a = 0; a < 16; a++) {
         const angle = (Math.PI * 2 * a) / 16;
         const x = Math.round(home.x + Math.cos(angle) * r);
         const y = Math.round(home.y + Math.sin(angle) * r);
-        // isAreaFree already rejects impassable terrain and overlaps.
+        if (!this.sim.isAreaFree(x, y, size)) continue;
+        // Ensure a 2-tile gap between this building and any existing one,
+        // so harvesters (radius > 0.5, using the inflated blockedWide grid)
+        // can always path between buildings. Without this, the AI walls in
+        // its own supply centers and harvesters get permanently trapped.
+        if (this.hasClearance(x, y, size, 2)) return { x, y };
+      }
+    }
+    // Fallback: relax the clearance requirement if no spacious plot exists.
+    for (let r = 5; r < 24; r += 3) {
+      for (let a = 0; a < 16; a++) {
+        const angle = (Math.PI * 2 * a) / 16;
+        const x = Math.round(home.x + Math.cos(angle) * r);
+        const y = Math.round(home.y + Math.sin(angle) * r);
         if (this.sim.isAreaFree(x, y, size)) return { x, y };
       }
     }
     return null;
+  }
+
+  /** Check that no existing building is within `gap` tiles of the proposed footprint. */
+  private hasClearance(x: number, y: number, size: number, gap: number): boolean {
+    for (const b of this.mine(this.sim.buildings.values())) {
+      const bs = buildingDef(b.type).size;
+      // Check if the expanded footprints overlap.
+      if (x < b.x + bs + gap && x + size + gap > b.x &&
+          y < b.y + bs + gap && y + size + gap > b.y) return false;
+    }
+    return true;
   }
 
   private tryBuild(type: string, reserve = 0): boolean {
@@ -339,15 +369,17 @@ export class AIPlayer {
     // Sustained economy: build additional supply centers so harvesters have
     // drop-off points and income scales into late game. One center stalls
     // after the nearby pile depletes and the long walk kills throughput.
+    // Prioritize this early: a second supply center costs 1500 and pays for
+    // itself in roughly 30 seconds of two-harvester throughput.
     const supplyCenters = has("supply_center");
     const harvesters = this.myUnits("harvester").length;
-    if (supplyCenters < 3 && eco.credits > 2500 && harvesters >= this.tuning.harvesterTarget) {
+    if (supplyCenters < 3 && eco.credits > 1500 && harvesters >= 2) {
       if (this.tryBuild("supply_center")) return;
     }
 
     // Scale harvester target with supply centers: each center supports 2-3
     // harvesters, so more centers means more income means more army.
-    const scaledHarvesterTarget = this.tuning.harvesterTarget + (supplyCenters - 1) * 2;
+    const scaledHarvesterTarget = this.tuning.harvesterTarget + (supplyCenters - 1) * 3;
     const needsHarvesters = harvesters < scaledHarvesterTarget;
     const reserve = needsHarvesters ? UNITS.harvester!.cost : 0;
     if (eco.credits < reserve) return;
@@ -372,10 +404,10 @@ export class AIPlayer {
     const production = has("barracks") + has("war_factory");
     const productionCap = this.tuning.maxProduction + 2;
     if (production < productionCap) {
-      if (eco.credits > 2500 && has("barracks") <= has("war_factory")) {
+      if (eco.credits > 2000 && has("barracks") <= has("war_factory")) {
         if (this.tryBuild("barracks")) return;
       }
-      if (eco.credits > 3500) {
+      if (eco.credits > 3000) {
         if (this.tryBuild("war_factory")) return;
       }
     }
@@ -399,7 +431,7 @@ export class AIPlayer {
     // Harvesters pay for everything else, so they come first.
     // Scale target with supply centers for sustained income growth.
     const supplyCenters = this.myBuildings("supply_center");
-    const harvesterTarget = this.tuning.harvesterTarget + Math.max(0, supplyCenters.length - 1) * 2;
+    const harvesterTarget = this.tuning.harvesterTarget + Math.max(0, supplyCenters.length - 1) * 3;
     const harvesters = this.myUnits("harvester").length;
     if (harvesters < harvesterTarget) {
       // Queue at the supply center with the shortest queue.
@@ -455,7 +487,16 @@ export class AIPlayer {
    */
   private commandArmy(): void {
     const combat = this.myUnits().filter((u) => unitDef(u.type).weapon !== undefined);
-    if (combat.length === 0) return;
+    if (combat.length === 0) {
+      // Army wiped out: reset committed so rebuilt units mass at home
+      // instead of trickling into the enemy one at a time.
+      if (this.committed) {
+        this.committed = false;
+        this.attackWaves++;
+        this.massing.clear();
+      }
+      return;
+    }
 
     const home = this.homePosition();
     const target = this.model.knownBase() ?? this.scoutTarget();
