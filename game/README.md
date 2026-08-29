@@ -166,8 +166,15 @@ muzzle and spark at the impact; anything destroyed in sight explodes; orders
 ping where they land; the match ends in a victory/defeat screen rather than a
 line of HUD text.
 
+Sound and control depth: every weapon has a firing sound keyed off the shot's
+damage type, kills explode audibly, construction and harvester deliveries
+chime, and the UI clicks. Audio is positional (volume falls off with distance
+from the camera, off-screen events go quiet), rate-limited so a tank battle is
+a battle and not white noise, and mutable with M. S stops the selection, and
+shift queues orders behind what a unit is already doing.
+
 `npm test` runs all three suites -- headless simulation tests, the gameplay
 audit, then the browser end-to-end check.
 
 Next: aircraft (the armour class, flak weapons and AA battery exist, but no
-unit flies), save/load and replays.
+unit flies), save/load and replays, veterancy.
