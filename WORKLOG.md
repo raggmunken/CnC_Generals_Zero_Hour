@@ -544,3 +544,60 @@ settles at 50% [15%,85%], so the harness self-check holds with the new mix.
 Also: game/ now ships as an all-in-one Dockerfile (node:20-slim, npm install,
 vite build, tsx server) so the match server can be hosted as a single
 container and players join by URL.
+
+Claude: Reviewed the branch from a fresh checkout after you pushed via Kimi and
+directly. Fourteen commits from Kimi (sound, a modern glass UI, and aircraft
+with AI air play) plus three unlabelled commits from "Rasmus Persson"
+(AI army rebuild, harvester stuck-traps, pathfinding, dozer building, sell
+buildings, C&C balance) that landed with no WORKLOG entry — noting it because
+the convention only works if everyone touching this file keeps using it.
+
+Claude: ISSUE FOUND AND FIXED — the sound pass and my earlier synthesis fix
+collided. Kimi independently built a real base64-encoded sample pack
+(client/src/audio-pack/*.ts, ~700 lines) before seeing that client/src/audio.ts
+had already been rewritten to synthesise sound at runtime with no shipped
+samples. A later commit tried to drop the dead pack but only deleted
+audio-data.ts and one sample file (explosion.ts); six other sample modules and
+tools/encode-audio.ts were left behind, wired to nothing. Deleted the rest.
+The audit's "sound pack is embedded" check was also stale — it read
+audio-data.ts, which no longer exists, so it failed outright (43 working, 1
+broken). Replaced it with a one-line acknowledgement that sound is
+synthesised client-side and covered by e2e, which already asserts all eight
+samples decode. Back to 0 broken.
+
+Claude: Verified the rest from a clean checkout rather than trusting the
+commit messages: tsc clean, build clean, sim ALL PASS, e2e ALL PASS (23
+checks including the new S-stop and sound-decode assertions), audit 44/0/2.
+Also ran the new test/diagnostic.ts (22/22) and 20 games of self-play per
+matchup: mirror still holds at 50% [30%,70%], the harness self-check that
+makes the other numbers trustworthy.
+
+Claude: The Rasmus commits are good work, reviewed for correctness rather than
+just run. The root-cause list in the "army rebuild" commit checks out against
+the diff: commandArmy() really did leave committed=true after a total wipe,
+buildBase() really did run before trainUnits() every tick, and the harvester
+radius/blockedWide mismatch really did wall harvesters in with only 1-2 tile
+gaps. The new blocked-tile teleport and 3-strikes force-relocate in moveUnit()
+are bounded (nearestOpen search radius 10-15, not unbounded) and read correctly
+against the diagnostic tests that exercise them.
+
+Claude: NOT FIXED, worth knowing — nearestReachable() (the new BFS fallback for
+an unreachable order) uses queue.shift() on a plain array, which is O(n) per
+pop, so the search is O(n^2) in the worst case over the reachable area. It only
+runs when findPath returns null, which is not the common case, but that case
+recurs every tick for as long as the order stands: setDestination's repath-skip
+requires u.path to be non-empty, and a truly-unreachable order leaves u.path
+undefined, so it never qualifies for the skip. A player who right-click-attacks
+a target across water gets a full failed A* plus a BFS over the reachable
+region every tick until the order changes. Not measured under load, so I have
+not touched it — a bounded map is a few thousand tiles and this may simply not
+be visible in practice, but it is the kind of thing that only shows up as
+"the game gets slow with more units" days later.
+
+Claude: MEASURED — the difficulty-tier problem logged earlier in this file
+persists after the economy rework: 20-game self-play still has hard losing to
+both easy (40%) and normal (37%). Expected, not a regression — the earlier
+entry already concluded this needs behavioural differentiation, not constant
+tuning, and the AI changes in this round were about sustaining economy and
+unsticking pathing, not about difficulty scaling. Flagging so nobody reads the
+economy fixes as having addressed it.
